@@ -14,6 +14,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::Context;
 use conflux_core::config::{Remote, Sync};
 use conflux_core::engine::{self, group_label, SyncSummary};
+use conflux_core::gitrepo;
 use conflux_core::ipc::{GroupOutcome, GroupPlan, GroupStatus, Request, Response, SyncTarget};
 use conflux_core::model::{Deletions, EmptyDirMode, RemoteKind};
 use conflux_core::{Config, Paths};
@@ -214,8 +215,16 @@ async fn worker_loop(
         // One attempt plus RETRY_BACKOFF.len() retries.
         for attempt in 0..=RETRY_BACKOFF.len() {
             match run_one(&state, &sync_lock, &label, remote_refresh).await {
-                Some(outcome) if outcome.error.is_some() => {
-                    let err = outcome.error.unwrap();
+                Some(run) if run.outcome.error.is_some() => {
+                    let err = run.outcome.error.unwrap();
+                    // Some failures are waiting on the user — a `git_repo` that is
+                    // not a clone, a conflict to resolve. Retrying those would only
+                    // repeat the same message three times, so report once and move
+                    // on; the next trigger will pick the group up again.
+                    if !run.retryable {
+                        error!(group = %label, "sync cannot proceed: {err}");
+                        break;
+                    }
                     if let Some(delay) = RETRY_BACKOFF.get(attempt) {
                         warn!(group = %label, "sync failed, retrying in {delay:?}: {err}");
                         tokio::time::sleep(*delay).await;
@@ -230,6 +239,14 @@ async fn worker_loop(
     }
 }
 
+/// One sync attempt: what to report over IPC, plus whether trying again could
+/// plausibly succeed. Kept private to the daemon so the retry policy does not leak
+/// into the IPC protocol.
+struct RunResult {
+    outcome: GroupOutcome,
+    retryable: bool,
+}
+
 /// Resolve, run, and record one group's sync. Serialized by `sync_lock`.
 ///
 /// `remote_refresh` marks a periodic `pull_interval` run: it only applies
@@ -240,7 +257,7 @@ async fn run_one(
     sync_lock: &Arc<tokio::sync::Mutex<()>>,
     label: &str,
     remote_refresh: bool,
-) -> Option<GroupOutcome> {
+) -> Option<RunResult> {
     let (sync, remote, state_dir, empty_dirs, deletions, max_file_size, exclude_defaults) = {
         let st = state.lock().unwrap();
         let (sync, remote, state_dir) = resolve(&st, label)?;
@@ -264,8 +281,11 @@ async fn run_one(
     // rather than "synced".
     let verb = if remote_refresh { "pulled" } else { "synced" };
     debug!(group = %label, "running {verb}");
-    let join = tokio::task::spawn_blocking(move || {
-        engine::run(
+    let join = tokio::task::spawn_blocking(move || match remote {
+        // A `git_repo` group has no remote to reconcile against: git itself is the
+        // transport, so it takes the other path entirely.
+        None => gitrepo::run(&sync, remote_refresh),
+        Some(remote) => engine::run(
             &sync,
             &remote,
             &state_dir,
@@ -274,11 +294,11 @@ async fn run_one(
             deletions,
             max_file_size,
             &exclude_defaults,
-        )
+        ),
     })
     .await;
 
-    let (summary, error) = match join {
+    let (summary, error, retryable) = match join {
         Ok(Ok(report)) => {
             for c in &report.conflicts {
                 warn!(group = %label, path = %c.path, "conflict resolved ({:?}); copy at {}", c.winner, c.conflict_copy.display());
@@ -288,10 +308,14 @@ async fn run_one(
             } else {
                 debug!(group = %label, "{verb} complete, no changes");
             }
-            (Some(SyncSummary::from(&report)), None)
+            (Some(SyncSummary::from(&report)), None, true)
         }
-        Ok(Err(e)) => (None, Some(e.to_string())),
-        Err(e) => (None, Some(format!("sync task failed: {e}"))),
+        // A precondition failure is waiting on the user, not on luck.
+        Ok(Err(e)) => {
+            let retryable = !matches!(e, conflux_core::Error::Precondition(_));
+            (None, Some(e.to_string()), retryable)
+        }
+        Err(e) => (None, Some(format!("sync task failed: {e}")), true),
     };
 
     {
@@ -302,10 +326,13 @@ async fn run_one(
         entry.last_error = error.clone();
     }
 
-    Some(GroupOutcome {
-        label: label.to_string(),
-        summary,
-        error,
+    Some(RunResult {
+        outcome: GroupOutcome {
+            label: label.to_string(),
+            summary,
+            error,
+        },
+        retryable,
     })
 }
 
@@ -337,8 +364,9 @@ async fn plan_one(
 
     let _guard = sync_lock.lock().await;
     debug!(group = %label, "computing dry-run plan");
-    let join = tokio::task::spawn_blocking(move || {
-        engine::plan(
+    let join = tokio::task::spawn_blocking(move || match remote {
+        None => gitrepo::plan(&sync),
+        Some(remote) => engine::plan(
             &sync,
             &remote,
             &state_dir,
@@ -346,7 +374,7 @@ async fn plan_one(
             deletions,
             max_file_size,
             &exclude_defaults,
-        )
+        ),
     })
     .await;
 
@@ -413,6 +441,7 @@ fn spawn_triggers(state: &Shared, submit: &Submitter) -> Triggers {
                     submit,
                     &label,
                     "local",
+                    sync.is_git_repo(),
                 );
             }
             conflux_core::model::Trigger::WatchBoth => {
@@ -424,6 +453,7 @@ fn spawn_triggers(state: &Shared, submit: &Submitter) -> Triggers {
                     submit,
                     &label,
                     "local",
+                    sync.is_git_repo(),
                 );
                 // Also watch the remote's filesystem path. Config validation
                 // guarantees a `filesystem` backend here, so this always applies.
@@ -437,6 +467,7 @@ fn spawn_triggers(state: &Shared, submit: &Submitter) -> Triggers {
                             submit,
                             &label,
                             "remote",
+                            false,
                         );
                         remote_watched = true;
                     }
@@ -474,6 +505,7 @@ fn spawn_triggers(state: &Shared, submit: &Submitter) -> Triggers {
 /// Install a recursive watcher on `path`, pushing it into `triggers` on success
 /// or logging a clear warning on failure. `role` (`"local"`/`"remote"`) is used
 /// only in the messages.
+#[allow(clippy::too_many_arguments)]
 fn install_watch(
     triggers: &mut Triggers,
     path: &Path,
@@ -481,8 +513,15 @@ fn install_watch(
     submit: &Submitter,
     label: &str,
     role: &str,
+    skip_git_dir: bool,
 ) {
-    match spawn_watch(path, debounce, submit.clone(), label.to_string()) {
+    match spawn_watch(
+        path,
+        debounce,
+        submit.clone(),
+        label.to_string(),
+        skip_git_dir,
+    ) {
         Ok(watcher) => triggers.watchers.push(watcher),
         Err(e) => {
             let disp = path.display();
@@ -501,15 +540,27 @@ fn install_watch(
 }
 
 /// Set up a debounced recursive watcher that submits the group on change.
+///
+/// With `skip_git_dir`, changes inside a `.git` directory do not count as activity.
+/// That is essential for a `git_repo` group: conflux's own commit and fetch write
+/// there, which would otherwise re-trigger the watcher and spin — sync, commit,
+/// notice `.git` changed, sync again — indefinitely.
 fn spawn_watch(
     root: &Path,
     debounce: Duration,
     submit: Submitter,
     label: String,
+    skip_git_dir: bool,
 ) -> anyhow::Result<Box<dyn Any + Send>> {
     let mut debouncer = new_debouncer(debounce, None, move |res: DebounceEventResult| {
         if let Ok(events) = res {
-            if !events.is_empty() {
+            let relevant = events.iter().any(|event| {
+                event
+                    .paths
+                    .iter()
+                    .any(|path| !(skip_git_dir && in_git_dir(path)))
+            });
+            if relevant {
                 submit.submit(label.clone());
             }
         }
@@ -521,6 +572,11 @@ fn spawn_watch(
         .context("register recursive watch")?;
     debouncer.cache().add_root(root, RecursiveMode::Recursive);
     Ok(Box::new(debouncer))
+}
+
+/// Whether `path` is inside a repository's `.git` directory.
+fn in_git_dir(path: &Path) -> bool {
+    path.components().any(|c| c.as_os_str() == ".git")
 }
 
 /// Accept IPC connections and dispatch each request.
@@ -579,8 +635,8 @@ async fn handle_conn(
                 let mut outcomes = Vec::new();
                 for label in labels {
                     // Manual `conflux sync` always runs a full bidirectional sync.
-                    if let Some(o) = run_one(state, sync_lock, &label, false).await {
-                        outcomes.push(o);
+                    if let Some(run) = run_one(state, sync_lock, &label, false).await {
+                        outcomes.push(run.outcome);
                     }
                 }
                 let _ = submit; // manual syncs run inline; queue unused here
@@ -710,14 +766,20 @@ fn active_labels(st: &DaemonState) -> Vec<String> {
         .collect()
 }
 
-fn resolve(st: &DaemonState, label: &str) -> Option<(Sync, Remote, PathBuf)> {
+/// Look up a group by label, along with the remote it syncs against — `None` for a
+/// `git_repo` group, which has none by design.
+fn resolve(st: &DaemonState, label: &str) -> Option<(Sync, Option<Remote>, PathBuf)> {
     let sync = st
         .config
         .syncs
         .iter()
         .find(|s| group_label(s) == label)?
         .clone();
-    let remote = st.config.remote(sync.remote_id())?.clone();
+    let remote = if sync.is_git_repo() {
+        None
+    } else {
+        Some(st.config.remote(sync.remote_id())?.clone())
+    };
     Some((sync, remote, st.paths.state.clone()))
 }
 
@@ -751,9 +813,15 @@ fn status_list(st: &DaemonState) -> Vec<GroupStatus> {
             let rt = st.status.get(&label).cloned().unwrap_or_default();
             GroupStatus {
                 label,
-                remote: s.remote_id().to_string(),
+                // A `git_repo` group syncs through the clone's own remote, which
+                // lives in the repository rather than in this config.
+                remote: if s.is_git_repo() {
+                    "git-repo".to_string()
+                } else {
+                    s.remote_id().to_string()
+                },
                 root: s.local.display().to_string(),
-                trigger: format!("{:?}", s.trigger).to_lowercase(),
+                trigger: s.trigger.as_str().to_string(),
                 last_run: rt.last_run,
                 last_summary: rt.last_summary,
                 last_error: rt.last_error,
@@ -850,6 +918,103 @@ mod tests {
             resolve_pull_interval(&config, &sync_named(&config, "opt-out")),
             Some(Duration::ZERO)
         );
+    }
+
+    #[test]
+    fn git_groups_get_a_scheduled_fetch_but_never_over_an_explicit_level() {
+        // Neither kind of git sync can be watched from the remote side, so the
+        // config fills in a default pull_interval on load and the scheduler picks
+        // it up like any other.
+        let config = Config::from_toml_str(
+            r#"
+            [[sync]]
+            git_repo = "/tmp/notes"
+        "#,
+        )
+        .unwrap();
+        assert_eq!(
+            resolve_pull_interval(&config, &config.syncs[0]),
+            Some(conflux_core::config::DEFAULT_GIT_PULL_INTERVAL)
+        );
+
+        // ...and it sits below every explicit level.
+        let config = Config::from_toml_str(
+            r#"
+            [daemon]
+            pull_interval = "1h"
+
+            [[sync]]
+            git_repo = "/tmp/inherits-daemon"
+
+            [[sync]]
+            git_repo = "/tmp/opts-out"
+            pull_interval = "0s"
+        "#,
+        )
+        .unwrap();
+        let by_label = |name: &str| {
+            config
+                .syncs
+                .iter()
+                .find(|s| group_label(s) == name)
+                .expect("sync present")
+                .clone()
+        };
+        assert_eq!(
+            resolve_pull_interval(&config, &by_label("inherits-daemon")),
+            Some(Duration::from_secs(3600))
+        );
+        assert_eq!(
+            resolve_pull_interval(&config, &by_label("opts-out")),
+            Some(Duration::ZERO)
+        );
+    }
+
+    #[test]
+    fn git_dir_events_are_filtered_only_for_clone_groups() {
+        // conflux's own commit writes into `.git`; treating that as activity would
+        // make a `git_repo` watch group re-trigger itself forever.
+        assert!(in_git_dir(Path::new("/home/me/notes/.git/index")));
+        assert!(in_git_dir(Path::new("/home/me/notes/.git/refs/heads/main")));
+        assert!(!in_git_dir(Path::new("/home/me/notes/a.md")));
+        assert!(!in_git_dir(Path::new("/home/me/notes/sub/.gitignore")));
+    }
+
+    #[test]
+    fn resolve_gives_a_git_repo_group_no_remote() {
+        let config = Config::from_toml_str(
+            r#"
+            [[remote]]
+            id = "m"
+            backend = "filesystem"
+            url = "/tmp/mirror"
+
+            [[sync]]
+            remote = "m"
+            local = "/tmp/docs"
+            include = ["**"]
+
+            [[sync]]
+            git_repo = "/tmp/notes"
+        "#,
+        )
+        .unwrap();
+        let st = DaemonState {
+            config,
+            paths: Paths {
+                config: "/x".into(),
+                state: "/x".into(),
+                socket: "/x".into(),
+            },
+            status: BTreeMap::new(),
+        };
+        // The file-level group resolves to its remote, and so takes the engine
+        // path; the clone group has none and takes the git path.
+        let (_, remote, _) = resolve(&st, "m").expect("group present");
+        assert!(remote.is_some());
+        let (sync, remote, _) = resolve(&st, "notes").expect("group present");
+        assert!(remote.is_none());
+        assert!(sync.is_git_repo());
     }
 
     #[test]

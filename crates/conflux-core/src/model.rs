@@ -50,14 +50,17 @@ impl RemoteKind {
 }
 
 /// How a sync group is triggered.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Trigger {
     /// Only synced on explicit request (`conflux sync`).
     Manual,
     /// Synced on a fixed interval.
     Timer,
-    /// Synced when watched local files change.
+    /// Synced when watched local files change (default): the reactive behaviour
+    /// most groups want, and — paired with `pull_interval` for the remote side —
+    /// what "just keep it in sync" means.
+    #[default]
     Watch,
     /// Like `watch`, but also watches the remote side. Only a `filesystem`
     /// backend (including a `remote_fs` shortcut) exposes a watchable filesystem
@@ -65,6 +68,19 @@ pub enum Trigger {
     /// logs a warning.
     #[serde(rename = "watch-both")]
     WatchBoth,
+}
+
+impl Trigger {
+    /// The lowercase name used in config (`"manual"`, `"timer"`, `"watch"`,
+    /// `"watch-both"`).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Trigger::Manual => "manual",
+            Trigger::Timer => "timer",
+            Trigger::Watch => "watch",
+            Trigger::WatchBoth => "watch-both",
+        }
+    }
 }
 
 /// How empty directories are handled during a sync.

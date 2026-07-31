@@ -31,6 +31,11 @@ pub const DEFAULT_INTERVAL: Duration = Duration::from_secs(60 * 60);
 /// Default `max_file_size` when none is configured at any level: 100 MB.
 pub const DEFAULT_MAX_FILE_SIZE: u64 = 100 * 1000 * 1000;
 
+/// Default `pull_interval` for a git-backed group when none is configured at any
+/// level. Unlike a `filesystem` remote, a git repo cannot be watched, so without
+/// a periodic pull a `watch` group would never notice commits from another host.
+pub const DEFAULT_GIT_PULL_INTERVAL: Duration = Duration::from_secs(5 * 60);
+
 /// Top-level parsed configuration.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -70,7 +75,12 @@ pub struct DaemonConfig {
     /// Default interval for periodic remote pulls, overridable per remote/sync.
     /// `None` (unset) disables background pulling; `0` also disables it (handy to
     /// opt a single group out when a broader level enables it).
-    #[serde(default, deserialize_with = "de::opt_duration")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "de::opt_duration",
+        serialize_with = "se::opt_duration"
+    )]
     pub pull_interval: Option<Duration>,
     /// Default empty-directory handling, overridable per sync.
     #[serde(default)]
@@ -159,7 +169,12 @@ pub struct Remote {
     pub commit_msg_command: Option<String>,
     /// Remote-level default for periodic remote pulls (overrides the daemon
     /// default; overridden per sync). See [`DaemonConfig::pull_interval`].
-    #[serde(default, deserialize_with = "de::opt_duration")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "de::opt_duration",
+        serialize_with = "se::opt_duration"
+    )]
     pub pull_interval: Option<Duration>,
     /// Remote-level maximum synced file size in bytes (overrides the daemon
     /// default; overridden per sync). `0` means unlimited. See
@@ -181,18 +196,34 @@ pub struct Sync {
     #[serde(default)]
     pub label: Option<String>,
     /// Id of the remote this group syncs with (matches a `[[remote]]` `id`).
-    /// Exactly one of `remote` or `remote_fs` must be set. After loading it is
-    /// always populated: a `remote_fs` group has a `filesystem` remote
-    /// synthesized for it (see [`Config::materialize_inline_remotes`]).
+    /// Exactly one of `remote`, `remote_fs`, or `git_repo` must be set. For the
+    /// first two it is always populated after loading — a `remote_fs` group has a
+    /// remote synthesized (see [`Config::materialize_inline_remotes`]) — while a
+    /// `git_repo` group has none at all, and syncs through git instead.
     #[serde(default)]
     pub remote: Option<String>,
     /// Shortcut for syncing against a local filesystem path without declaring a
     /// `[[remote]]`: give a directory here instead of `remote` and conflux
     /// synthesizes a `filesystem` remote pointing at it. Tilde/env expanded on
-    /// load. Mutually exclusive with `remote`.
+    /// load. Mutually exclusive with `remote` and `git_repo`.
     #[serde(default)]
     pub remote_fs: Option<PathBuf>,
-    /// Single local root directory (tilde/env expanded on load).
+    /// Path to a git working clone (one with a `.git` of its own, as `git clone`
+    /// leaves behind) that conflux should keep up to date with its own `origin`:
+    /// it commits local changes, fetches, integrates, and pushes, using the
+    /// clone's configured remote and current branch. No `[[remote]]` is involved
+    /// — hence mutually exclusive with `remote` and `remote_fs` — and no file-level
+    /// reconciliation happens: git history is the source of truth. Tilde/env
+    /// expanded on load, and adopted as this group's `local` root.
+    ///
+    /// Because git decides what is tracked, the settings that describe file-level
+    /// syncing (`remote_path`, `include`, `scope`, `deletions`, `empty_dirs`,
+    /// `max_file_size`) do not apply and are rejected; use `.gitignore` instead.
+    #[serde(default)]
+    pub git_repo: Option<PathBuf>,
+    /// Single local root directory (tilde/env expanded on load). Supplied by
+    /// `git_repo` for a clone-syncing group, and required otherwise.
+    #[serde(default)]
     pub local: PathBuf,
     /// Path under the remote that mirrors `local`. Optional; when omitted (or
     /// empty) the group maps to the remote's root. Normalized to drop
@@ -204,28 +235,54 @@ pub struct Sync {
     /// paths outside `include` are treated is governed by [`Sync::scope`].
     #[serde(default)]
     pub include: Vec<String>,
-    /// What this group covers relative to `include`: `include` (default),
-    /// `remote`, `local`, or `mirror`. See [`Scope`]. Sync-level only.
+    /// What this group covers relative to `include`: `include` (the default),
+    /// `remote`, `local`, or `mirror`. See [`Scope`]. Sync-level only, and not
+    /// applicable to a `git_repo` group. Read it through [`Sync::scope`], which
+    /// applies the default.
     #[serde(default)]
-    pub scope: Scope,
+    pub scope: Option<Scope>,
     /// Whether this group may delete files: `deny` never deletes on either side,
     /// regardless of `scope`; `allow` propagates deletions. Overrides the daemon
-    /// default; falls back to `deny` when unset everywhere. See [`Deletions`].
+    /// default; falls back to `deny` when unset everywhere. Not applicable to a
+    /// `git_repo` group, where git tracks deletions like any other change. See
+    /// [`Deletions`].
     #[serde(default)]
     pub deletions: Option<Deletions>,
-    /// How this group is triggered.
+    /// `git_repo` only (optional): command whose stdout becomes the commit message
+    /// (run via `sh -c` in the clone, so it can inspect the staged index).
+    /// Defaults to `"conflux sync from <hostname>"`. The `[[remote]]` field of the
+    /// same name does this for a `git` backend.
+    #[serde(default)]
+    pub commit_msg_command: Option<String>,
+    /// How this group is triggered. Defaults to `watch`.
+    #[serde(default)]
     pub trigger: Trigger,
     /// Timer interval; defaults to one hour when `trigger = "timer"`.
-    #[serde(default, deserialize_with = "de::opt_duration")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "de::opt_duration",
+        serialize_with = "se::opt_duration"
+    )]
     pub interval: Option<Duration>,
     /// Watch debounce override.
-    #[serde(default, deserialize_with = "de::opt_duration")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "de::opt_duration",
+        serialize_with = "se::opt_duration"
+    )]
     pub debounce: Option<Duration>,
     /// Periodic remote-pull interval for this group (overrides the remote/daemon
     /// default). Independent of `trigger`: it adds a pull-only run every interval
     /// so remote-side changes are picked up even for `watch`/`manual` groups.
     /// See [`DaemonConfig::pull_interval`].
-    #[serde(default, deserialize_with = "de::opt_duration")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "de::opt_duration",
+        serialize_with = "se::opt_duration"
+    )]
     pub pull_interval: Option<Duration>,
     /// Empty-directory handling for this group (overrides the remote/daemon
     /// default): `ignore` (default), `prune`, or `keep`. Ignored for git.
@@ -255,19 +312,29 @@ impl Config {
             source,
         })?;
         let mut config: Config = toml::from_str(&text)?;
-        config.normalize();
-        config.materialize_inline_remotes()?;
-        config.validate()?;
+        config.resolve()?;
         Ok(config)
     }
 
     /// Parse a config from a TOML string (used by tests); also validates.
     pub fn from_toml_str(text: &str) -> Result<Self> {
         let mut config: Config = toml::from_str(text)?;
-        config.normalize();
-        config.materialize_inline_remotes()?;
-        config.validate()?;
+        config.resolve()?;
         Ok(config)
+    }
+
+    /// Turn a freshly parsed config into a fully resolved one: expand paths,
+    /// synthesize the remote behind a `remote_fs` shortcut (and adopt a
+    /// `git_repo`'s path as its local root), fill in the defaults that depend on
+    /// the kind of sync, then check the cross-field invariants.
+    ///
+    /// The order matters: the defaults key on each sync's backend, which is only
+    /// known once the shortcut remotes exist.
+    fn resolve(&mut self) -> Result<()> {
+        self.normalize();
+        self.materialize_inline_remotes()?;
+        self.apply_kind_defaults();
+        self.validate()
     }
 
     /// Expand `~`/env vars in local roots and trim slashes off remote paths.
@@ -288,6 +355,10 @@ impl Config {
             if let Some(path) = &sync.remote_fs {
                 sync.remote_fs = Some(expand_path(path));
             }
+            // Likewise a `git_repo`, before it becomes the group's local root.
+            if let Some(path) = &sync.git_repo {
+                sync.git_repo = Some(expand_path(path));
+            }
             // An empty / all-slashes `remote_path` means "the remote root".
             let trimmed = sync.remote_path.trim_matches('/');
             if trimmed.len() != sync.remote_path.len() {
@@ -297,41 +368,68 @@ impl Config {
     }
 
     /// Turn each sync's `remote_fs` shortcut into a real `filesystem`
-    /// `[[remote]]`, so the rest of the daemon sees a uniform remote list.
+    /// `[[remote]]`, and give each `git_repo` group its `local` root, so the rest
+    /// of the daemon sees a uniform list.
     ///
     /// For every group that sets `remote_fs`, a `filesystem` remote whose `url`
     /// is that path is synthesized (deduplicated by path, so several groups can
     /// share one), the group's `remote` is pointed at it, and `remote_fs` is
-    /// cleared. Enforces that exactly one of `remote`/`remote_fs` is set.
+    /// cleared. A `git_repo` group needs no remote at all — the clone knows its
+    /// own — so it just adopts the repository path as its `local` root. Enforces
+    /// that exactly one of `remote` / `remote_fs` / `git_repo` is set.
     fn materialize_inline_remotes(&mut self) -> Result<()> {
         for sync in &mut self.syncs {
-            match (&sync.remote, sync.remote_fs.take()) {
-                (Some(_), None) => {}
-                (None, Some(path)) => {
-                    let url = path.to_string_lossy().into_owned();
-                    // A stable, readable id derived from the path; reused when
-                    // several groups point `remote_fs` at the same directory.
-                    let id = format!("fs:{url}");
-                    if !self.remotes.iter().any(|r| r.id == id) {
-                        self.remotes.push(Remote::filesystem(id.clone(), url));
-                    }
-                    sync.remote = Some(id);
+            let fs = sync.remote_fs.take();
+            let set = [sync.remote.is_some(), fs.is_some(), sync.git_repo.is_some()];
+            if set.iter().filter(|s| **s).count() != 1 {
+                let which = if set.iter().any(|s| *s) {
+                    "sets more than one of `remote`, `remote_fs`, and `git_repo`"
+                } else {
+                    "sets none of `remote`, `remote_fs`, and `git_repo`"
+                };
+                return Err(Error::Validation(format!(
+                    "sync for `{}` {which}; use exactly one",
+                    sync.local.display()
+                )));
+            }
+
+            if let Some(path) = fs {
+                let url = path.to_string_lossy().into_owned();
+                // A stable, readable id derived from the path; reused when
+                // several groups point `remote_fs` at the same directory.
+                let id = format!("fs:{url}");
+                if !self.remotes.iter().any(|r| r.id == id) {
+                    self.remotes.push(Remote::filesystem(id.clone(), url));
                 }
-                (Some(_), Some(_)) => {
-                    return Err(Error::Validation(format!(
-                        "sync for `{}` sets both `remote` and `remote_fs`; use exactly one",
-                        sync.local.display()
-                    )));
-                }
-                (None, None) => {
-                    return Err(Error::Validation(format!(
-                        "sync for `{}` sets neither `remote` nor `remote_fs`; set one",
-                        sync.local.display()
-                    )));
-                }
+                sync.remote = Some(id);
+            } else if let Some(repo) = &sync.git_repo {
+                // The working clone *is* the group's tree: one path, no remote.
+                sync.local = repo.clone();
             }
         }
         Ok(())
+    }
+
+    /// Fill in the settings whose default depends on the kind of sync, so the rest
+    /// of the daemon — and `conflux config show` — sees one concrete, inspectable
+    /// value per group rather than resolving the default at each use.
+    ///
+    /// Only `pull_interval` needs this: neither a git remote nor a `git_repo`
+    /// clone can be watched for remote-side changes, so without a periodic fetch a
+    /// `watch` group would never learn about commits pushed from another host.
+    /// An explicit value always wins, at every level: a per-sync setting beats a
+    /// per-remote one, which beats `[daemon]`, which beats this default.
+    fn apply_kind_defaults(&mut self) {
+        for sync in &mut self.syncs {
+            let remote = self.remotes.iter().find(|r| r.id == sync.remote_id());
+            let git =
+                sync.git_repo.is_some() || remote.is_some_and(|r| r.backend == RemoteKind::Git);
+            let set_elsewhere = remote.is_some_and(|r| r.pull_interval.is_some())
+                || self.daemon.pull_interval.is_some();
+            if git && sync.pull_interval.is_none() && !set_elsewhere {
+                sync.pull_interval = Some(DEFAULT_GIT_PULL_INTERVAL);
+            }
+        }
     }
 
     /// Check cross-field invariants. Returns the first problem found.
@@ -367,12 +465,29 @@ impl Config {
         let mut labels = HashSet::new();
         let mut sync_ids = HashSet::new();
         for sync in &self.syncs {
-            if !ids.contains(sync.remote_id()) {
-                return Err(Error::Validation(format!(
-                    "sync for `{}` references unknown remote `{}`",
-                    sync.local.display(),
-                    sync.remote_id()
-                )));
+            if sync.local.as_os_str().is_empty() {
+                return Err(Error::Validation(
+                    "a sync sets no `local` directory; set one (or `git_repo`, which supplies it)"
+                        .to_string(),
+                ));
+            }
+            if sync.is_git_repo() {
+                self.validate_git_repo(sync)?;
+            } else {
+                if !ids.contains(sync.remote_id()) {
+                    return Err(Error::Validation(format!(
+                        "sync for `{}` references unknown remote `{}`",
+                        sync.local.display(),
+                        sync.remote_id()
+                    )));
+                }
+                if sync.commit_msg_command.is_some() {
+                    return Err(Error::Validation(format!(
+                        "sync for `{}` sets `commit_msg_command`, which only applies to a \
+                         `git_repo` sync; for a `git` backend set it on the `[[remote]]`",
+                        sync.local.display(),
+                    )));
+                }
             }
             // Two groups sharing a (remote, remote_path) collide on their state
             // index; catch it here (easy to hit now that `remote_path` is optional).
@@ -414,6 +529,53 @@ impl Config {
         Ok(())
     }
 
+    /// Reject the settings that cannot mean anything for a `git_repo` group.
+    ///
+    /// Such a group syncs through git: what is tracked is decided by the
+    /// repository and `.gitignore`, changes travel as commits, and the "remote" is
+    /// whatever the clone's `origin` points at. Every file-level knob would
+    /// therefore be silently ignored, so it is an error to set one rather than a
+    /// surprise later.
+    fn validate_git_repo(&self, sync: &Sync) -> Result<()> {
+        let label = crate::engine::group_label(sync);
+        let unsupported: [(&str, bool); 6] = [
+            ("remote_path", !sync.remote_path.is_empty()),
+            ("include", !sync.include.is_empty()),
+            ("scope", sync.scope.is_some()),
+            ("deletions", sync.deletions.is_some()),
+            ("empty_dirs", sync.empty_dirs.is_some()),
+            ("max_file_size", sync.max_file_size.is_some()),
+        ];
+        for (name, is_set) in unsupported {
+            if is_set {
+                return Err(Error::Validation(format!(
+                    "sync `{label}` sets `git_repo` and `{name}`, but a git working clone is \
+                     synced through git itself — what is tracked comes from the repository and \
+                     `.gitignore`, so `{name}` would have no effect; remove it"
+                )));
+            }
+        }
+        if let Some(remote) = self.remote(sync.remote_id()) {
+            // Unreachable for a loaded config (a git_repo group has no `remote`),
+            // but keep the invariant explicit rather than implied.
+            return Err(Error::Validation(format!(
+                "sync `{label}` sets both `git_repo` and remote `{}`",
+                remote.id
+            )));
+        }
+        // `watch-both` watches the remote side as a directory, which a git remote
+        // is not. (The generic check below keys on a `[[remote]]` this group has
+        // deliberately none of, so it is made here instead.)
+        if sync.trigger == Trigger::WatchBoth {
+            return Err(Error::Validation(format!(
+                "sync `{label}` uses `trigger = \"watch-both\"`, which requires a `filesystem` \
+                 remote to watch, but it syncs a git clone; use `trigger = \"watch\"` — its \
+                 `pull_interval` already fetches the remote side"
+            )));
+        }
+        Ok(())
+    }
+
     /// Non-fatal configuration lints: conditions that parse and validate fine
     /// but are almost certainly mistakes. Returned as human-readable messages
     /// for the caller to surface (the daemon logs them at startup; `conflux
@@ -421,17 +583,80 @@ impl Config {
     pub fn warnings(&self) -> Vec<String> {
         let mut out = Vec::new();
         for sync in &self.syncs {
+            let label = crate::engine::group_label(sync);
+            let git_remote =
+                self.remote(sync.remote_id()).map(|r| r.backend) == Some(RemoteKind::Git);
+
             // `scope = "include"` with no `include` globs matches nothing, so the
-            // group is inert — likely an oversight rather than intent.
-            if sync.scope == Scope::Include && sync.include.is_empty() {
+            // group is inert — likely an oversight rather than intent. (A
+            // `git_repo` group has no scope at all.)
+            if !sync.is_git_repo() && sync.scope() == Scope::Include && sync.include.is_empty() {
                 out.push(format!(
-                    "sync group `{}` has scope = \"include\" but an empty `include`, so it \
+                    "sync group `{label}` has scope = \"include\" but an empty `include`, so it \
                      syncs nothing; add `include` globs or pick a different `scope`",
-                    crate::engine::group_label(sync)
+                ));
+            }
+
+            // Neither a git remote nor a working clone can be watched for
+            // remote-side changes, so without a periodic fetch nothing but a
+            // `timer` trigger (or a manual `conflux sync`) ever looks. The default
+            // interval makes this reachable only by opting out explicitly.
+            if (git_remote || sync.is_git_repo())
+                && sync.trigger != Trigger::Timer
+                && self.pull_interval_for(sync).is_none_or(|d| d.is_zero())
+            {
+                out.push(format!(
+                    "sync group `{label}` syncs with git but has no `pull_interval` and \
+                     trigger = \"{}\", so commits pushed from another host are never fetched; set \
+                     `pull_interval` or use trigger = \"timer\"",
+                    sync.trigger.as_str(),
+                ));
+            }
+
+            // A `git_repo` pointing somewhere that is not a clone fails on every
+            // run. Only a warning, because one config can be shared across hosts
+            // where the path may not exist yet.
+            if sync.is_git_repo() && !sync.local.join(".git").exists() {
+                let what = if sync.local.exists() {
+                    "is not a git repository (no `.git` in it)"
+                } else {
+                    "does not exist"
+                };
+                out.push(format!(
+                    "sync group `{label}`: `git_repo` points at `{}`, which {what}; clone it first, \
+                     or use a `[[remote]]` + `local` sync if you meant to sync files into a plain \
+                     directory",
+                    sync.local.display(),
+                ));
+            }
+
+            // A git remote reconciles files against conflux's own clone under the
+            // state dir, leaving the local `.git` alone (it is excluded) while
+            // overwriting the working tree around it. That is almost never what
+            // someone pointing at a clone wants — `git_repo` is.
+            if git_remote && sync.local.join(".git").exists() {
+                out.push(format!(
+                    "sync group `{label}`: the local directory `{}` is itself a git clone, but \
+                     this group syncs *files* against a `[[remote]]` — conflux keeps its own clone \
+                     under the state dir and excludes `.git`, so your clone's history and branch \
+                     are ignored while its working tree is overwritten. To keep the clone itself \
+                     up to date through git (commit, fetch, rebase, push), use a `git_repo` sync \
+                     instead",
+                    sync.local.display(),
                 ));
             }
         }
         out
+    }
+
+    /// The periodic pull interval that applies to `sync`: its own value, else its
+    /// remote's, else the `[daemon]` default. `None` (or a zero duration) means
+    /// background pulling is off. Mirrors the daemon's scheduling decision so the
+    /// lints above agree with what actually runs.
+    fn pull_interval_for(&self, sync: &Sync) -> Option<Duration> {
+        sync.pull_interval
+            .or_else(|| self.remote(sync.remote_id()).and_then(|r| r.pull_interval))
+            .or(self.daemon.pull_interval)
     }
 
     /// Look up a remote by its id.
@@ -515,6 +740,19 @@ impl Sync {
     /// groups; the fallback empty string is unreachable for a loaded config.
     pub fn remote_id(&self) -> &str {
         self.remote.as_deref().unwrap_or_default()
+    }
+
+    /// This group's [`Scope`], defaulting to the safe [`Scope::Include`] when the
+    /// setting is omitted. Meaningless for a `git_repo` group, which does no
+    /// file-level reconciliation.
+    pub fn scope(&self) -> Scope {
+        self.scope.unwrap_or_default()
+    }
+
+    /// Whether this group syncs a git working clone through git itself, rather
+    /// than reconciling files against a remote. See [`Sync::git_repo`].
+    pub fn is_git_repo(&self) -> bool {
+        self.git_repo.is_some()
     }
 
     /// Effective timer interval: the per-sync value, else the daemon default.
@@ -698,6 +936,19 @@ mod se {
         s.serialize_str(&humantime::format_duration(*d).to_string())
     }
 
+    /// Serialize an optional duration back to the humantime string the matching
+    /// deserializer accepts, so `conflux config show` round-trips. (Without this
+    /// the derived impl emits a `{ secs, nanos }` table, which fails to re-parse.)
+    pub fn opt_duration<S>(d: &Option<Duration>, s: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match d {
+            Some(d) => duration(d, s),
+            None => s.serialize_none(),
+        }
+    }
+
     pub fn byte_size<S>(n: &u64, s: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -740,7 +991,7 @@ mod tests {
         let sync = &cfg.syncs[0];
         assert_eq!(sync.trigger, Trigger::Watch);
         assert_eq!(sync.debounce, Some(Duration::from_secs(3)));
-        assert_eq!(sync.scope, Scope::Include); // unset => the safe default
+        assert_eq!(sync.scope(), Scope::Include); // unset, non-git => safe default
         assert_eq!(sync.include, vec!["nvim".to_string(), "fish/*".to_string()]);
     }
 
@@ -820,7 +1071,7 @@ mod tests {
         "#,
         )
         .unwrap();
-        assert_eq!(cfg.syncs[0].scope, Scope::Remote);
+        assert_eq!(cfg.syncs[0].scope(), Scope::Remote);
     }
 
     #[test]
@@ -945,7 +1196,7 @@ mod tests {
         let sync = &cfg.syncs[0];
         // Unset `scope`/`include` => the safe default: `include` scope, empty
         // include list (nothing synced until the user opts paths in).
-        assert_eq!(sync.scope, Scope::Include);
+        assert_eq!(sync.scope(), Scope::Include);
         assert!(sync.include.is_empty());
         // Unset `deletions` => inherits, resolving to the daemon default `deny`.
         assert_eq!(sync.deletions, None);
@@ -976,11 +1227,13 @@ mod tests {
             label: None,
             remote: Some("r".into()),
             remote_fs: None,
+            git_repo: None,
             local: "/tmp/x".into(),
             remote_path: String::new(),
             include: vec![],
-            scope: Scope::default(),
+            scope: None,
             deletions: None,
+            commit_msg_command: None,
             trigger: Trigger::Manual,
             interval: None,
             debounce: None,
@@ -1270,7 +1523,261 @@ mod tests {
     }
 
     #[test]
-    fn rejects_both_remote_and_remote_fs() {
+    fn git_repo_group_needs_no_remote_and_adopts_the_repo_path() {
+        let cfg = Config::from_toml_str(
+            r#"
+            [[sync]]
+            git_repo = "/tmp/notes"
+        "#,
+        )
+        .unwrap();
+        // No remote is declared, synthesized, or needed: the clone knows its own.
+        assert!(cfg.remotes.is_empty());
+        let sync = &cfg.syncs[0];
+        assert!(sync.is_git_repo());
+        assert_eq!(sync.remote_id(), "");
+        // The repository path is the group's local root...
+        assert_eq!(sync.local, PathBuf::from("/tmp/notes"));
+        // ...and names the group, so `conflux sync notes` targets it.
+        assert_eq!(crate::engine::group_label(sync), "notes");
+    }
+
+    #[test]
+    fn git_repo_expands_tilde_into_the_local_root() {
+        let home = std::env::var("HOME").expect("HOME set in test env");
+        let cfg = Config::from_toml_str(
+            r#"
+            [[sync]]
+            git_repo = "~/notes"
+        "#,
+        )
+        .unwrap();
+        assert_eq!(cfg.syncs[0].local, PathBuf::from(format!("{home}/notes")));
+    }
+
+    #[test]
+    fn git_repo_group_gets_keep_it_updated_defaults() {
+        let cfg = Config::from_toml_str(
+            r#"
+            [[sync]]
+            git_repo = "/tmp/notes"
+        "#,
+        )
+        .unwrap();
+        let sync = &cfg.syncs[0];
+        // Local edits are picked up as they happen...
+        assert_eq!(sync.trigger, Trigger::Watch);
+        // ...and the remote side, which cannot be watched, is fetched on a timer.
+        assert_eq!(sync.pull_interval, Some(DEFAULT_GIT_PULL_INTERVAL));
+        // The default is materialized into the config, so `config show` prints it.
+        let shown = toml::to_string_pretty(&cfg).unwrap();
+        assert!(shown.contains("pull_interval = \"5m\""), "{shown}");
+    }
+
+    #[test]
+    fn git_repo_pull_interval_default_yields_to_every_explicit_level() {
+        let cfg = Config::from_toml_str(
+            r#"
+            [[sync]]
+            git_repo = "/tmp/notes"
+            pull_interval = "0s"
+        "#,
+        )
+        .unwrap();
+        assert_eq!(cfg.syncs[0].pull_interval, Some(Duration::ZERO));
+
+        let cfg = Config::from_toml_str(
+            r#"
+            [daemon]
+            pull_interval = "30m"
+
+            [[sync]]
+            git_repo = "/tmp/notes"
+        "#,
+        )
+        .unwrap();
+        assert_eq!(cfg.syncs[0].pull_interval, None);
+    }
+
+    #[test]
+    fn git_backed_remote_also_gets_the_pull_interval_default() {
+        // Neither kind of git sync can be watched from the remote side.
+        let cfg = Config::from_toml_str(
+            r#"
+            [[remote]]
+            id = "dotfiles"
+            backend = "git"
+            url = "https://github.com/me/dotfiles.git"
+
+            [[sync]]
+            remote = "dotfiles"
+            local = "/tmp/home"
+            include = [".bashrc"]
+        "#,
+        )
+        .unwrap();
+        assert_eq!(cfg.syncs[0].pull_interval, Some(DEFAULT_GIT_PULL_INTERVAL));
+        // ...but a filesystem/webdav group is left alone.
+        let cfg = Config::from_toml_str(
+            r#"
+            [[sync]]
+            remote_fs = "/mnt/backup"
+            local = "/tmp/docs"
+            include = ["**"]
+        "#,
+        )
+        .unwrap();
+        assert_eq!(cfg.syncs[0].pull_interval, None);
+    }
+
+    #[test]
+    fn rejects_file_level_settings_on_a_git_repo_group() {
+        // git decides what is tracked, so every file-level knob is an error rather
+        // than a setting that would be quietly ignored.
+        for setting in [
+            "remote_path = \"sub\"",
+            "include = [\"**\"]",
+            "scope = \"mirror\"",
+            "deletions = \"allow\"",
+            "empty_dirs = \"mirror\"",
+            "max_file_size = \"10MB\"",
+        ] {
+            let err =
+                Config::from_toml_str(&format!("[[sync]]\ngit_repo = \"/tmp/notes\"\n{setting}\n"))
+                    .unwrap_err();
+            assert!(matches!(err, Error::Validation(_)), "for `{setting}`");
+        }
+
+        // `watch-both` needs a filesystem directory to watch on the remote side.
+        let err = Config::from_toml_str(
+            "[[sync]]\ngit_repo = \"/tmp/notes\"\ntrigger = \"watch-both\"\n",
+        )
+        .unwrap_err();
+        assert!(matches!(err, Error::Validation(_)));
+    }
+
+    #[test]
+    fn git_repo_accepts_the_settings_that_still_mean_something() {
+        let cfg = Config::from_toml_str(
+            r#"
+            [[sync]]
+            id = "notes"
+            label = "My notes"
+            git_repo = "/tmp/notes"
+            trigger = "timer"
+            interval = "10m"
+            pull_interval = "2m"
+            debounce = "1s"
+            exclude = ["*.tmp"]
+            profiles = ["desktop"]
+            commit_msg_command = "printf 'notes: %s' \"$(date -I)\""
+        "#,
+        )
+        .unwrap();
+        let sync = &cfg.syncs[0];
+        assert_eq!(sync.id.as_deref(), Some("notes"));
+        assert_eq!(sync.trigger, Trigger::Timer);
+        assert_eq!(sync.interval, Some(Duration::from_secs(600)));
+        assert!(sync.commit_msg_command.is_some());
+    }
+
+    #[test]
+    fn rejects_commit_msg_command_on_a_file_level_sync() {
+        // For a `git` backend it belongs on the [[remote]], which owns the clone.
+        let err = Config::from_toml_str(
+            r#"
+            [[sync]]
+            remote_fs = "/mnt/backup"
+            local = "/tmp/docs"
+            commit_msg_command = "printf hi"
+        "#,
+        )
+        .unwrap_err();
+        assert!(matches!(err, Error::Validation(_)));
+    }
+
+    #[test]
+    fn warns_when_a_git_repo_group_can_never_fetch() {
+        // A directory that looks like a clone, so only the fetch lint can fire.
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("notes");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        let base = format!("[[sync]]\ngit_repo = \"{}\"\n", repo.display());
+        let base = base.as_str();
+        // The default pull_interval keeps a `watch` group honest.
+        assert!(Config::from_toml_str(base).unwrap().warnings().is_empty());
+
+        // Opting out explicitly means other hosts' commits never arrive.
+        let cfg = Config::from_toml_str(&format!("{base}pull_interval = \"0s\"\n")).unwrap();
+        let warnings = cfg.warnings();
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("never fetched"), "{:?}", warnings[0]);
+
+        // ...unless it's on a timer, which fetches on every run anyway.
+        let cfg = Config::from_toml_str(&format!(
+            "{base}pull_interval = \"0s\"\ntrigger = \"timer\"\n"
+        ))
+        .unwrap();
+        assert!(cfg.warnings().is_empty());
+    }
+
+    #[test]
+    fn warns_when_git_repo_is_not_a_clone() {
+        // A typo'd or not-yet-cloned path would fail on every run; say so up front.
+        let cfg = Config::from_toml_str("[[sync]]\ngit_repo = \"/nonexistent/notes\"\n").unwrap();
+        let warnings = cfg.warnings();
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("does not exist"), "{:?}", warnings[0]);
+
+        // A directory that exists but is not a repository.
+        let tmp = tempfile::tempdir().unwrap();
+        let plain = tmp.path().join("plain");
+        std::fs::create_dir_all(&plain).unwrap();
+        let cfg = Config::from_toml_str(&format!("[[sync]]\ngit_repo = \"{}\"\n", plain.display()))
+            .unwrap();
+        let warnings = cfg.warnings();
+        assert_eq!(warnings.len(), 1);
+        assert!(
+            warnings[0].contains("not a git repository"),
+            "{:?}",
+            warnings[0]
+        );
+    }
+
+    #[test]
+    fn warns_when_a_file_level_group_points_at_a_clone() {
+        // The case that motivated `git_repo`: a git *remote* reconciling files into
+        // a directory that is itself a clone ignores its history entirely.
+        let tmp = tempfile::tempdir().unwrap();
+        let local = tmp.path().join("notes");
+        std::fs::create_dir_all(local.join(".git")).unwrap();
+
+        let cfg = Config::from_toml_str(&format!(
+            r#"
+            [[remote]]
+            id = "notes"
+            backend = "git"
+            url = "https://github.com/me/notes.git"
+
+            [[sync]]
+            remote = "notes"
+            local = "{}"
+            scope = "mirror"
+        "#,
+            local.display()
+        ))
+        .unwrap();
+        let warnings = cfg.warnings();
+        assert_eq!(warnings.len(), 1);
+        assert!(
+            warnings[0].contains("use a `git_repo` sync instead"),
+            "{:?}",
+            warnings[0]
+        );
+    }
+
+    #[test]
+    fn rejects_a_sync_with_no_local_and_no_git_repo() {
         let err = Config::from_toml_str(
             r#"
             [[remote]]
@@ -1280,13 +1787,37 @@ mod tests {
 
             [[sync]]
             remote = "r"
-            remote_fs = "/tmp/backup"
-            local = "/tmp/a"
-            trigger = "manual"
         "#,
         )
         .unwrap_err();
         assert!(matches!(err, Error::Validation(_)));
+    }
+
+    #[test]
+    fn rejects_more_than_one_remote_shortcut() {
+        // `remote`, `remote_fs`, and `git_repo` are three different answers to
+        // "what does this group sync against"; exactly one must be set.
+        for extra in [
+            "remote = \"r\"\nremote_fs = \"/tmp/backup\"",
+            "remote = \"r\"\ngit_repo = \"/tmp/notes\"",
+            "remote_fs = \"/tmp/backup\"\ngit_repo = \"/tmp/notes\"",
+        ] {
+            let err = Config::from_toml_str(&format!(
+                r#"
+                [[remote]]
+                id = "r"
+                backend = "filesystem"
+                url = "/tmp/mirror"
+
+                [[sync]]
+                {extra}
+                local = "/tmp/a"
+                trigger = "manual"
+            "#
+            ))
+            .unwrap_err();
+            assert!(matches!(err, Error::Validation(_)), "for `{extra}`");
+        }
     }
 
     #[test]

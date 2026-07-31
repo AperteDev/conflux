@@ -29,13 +29,27 @@ pub struct GitBackend {
     base: PathBuf,
     url: String,
     branch: Option<String>,
+    commit_msg_command: Option<String>,
+    auth: GitAuth,
+}
+
+/// Everything needed to authenticate against a git remote, resolved once so the
+/// credentials callback can iterate candidates across libgit2's retry attempts.
+///
+/// Built either from a configured [`Remote`] (WebDAV-style username/password plus
+/// optional deploy key) or, for a working clone that conflux did not create, from
+/// the repository's own environment — see [`GitAuth::for_clone`].
+pub struct GitAuth {
     username: Option<String>,
     password: Option<String>,
-    commit_msg_command: Option<String>,
-    /// SSH credentials to try, in order, for this remote's host. Precomputed
-    /// once so the credentials callback can iterate them across libgit2's
-    /// retry attempts.
+    /// SSH credentials to try, in order, for this remote's host.
     ssh_creds: Vec<SshCred>,
+    /// Repository whose git config may name a credential helper
+    /// (`credential.helper`) to ask when the server wants a password we were not
+    /// given. Only set for a working clone, where the user's own git setup is the
+    /// right place to look. Held as a path rather than an open `git2::Config`
+    /// because that type is not `Send`, and backends cross a thread boundary.
+    helper_repo: Option<PathBuf>,
 }
 
 /// One SSH credential candidate the credentials callback can offer.
@@ -48,6 +62,96 @@ enum SshCred {
     KeyFile(PathBuf),
     /// Raw private key material held in memory (from `identity_file_command`).
     KeyInline(String),
+}
+
+impl GitAuth {
+    /// Credentials for a configured `[[remote]]`: its `username`/`password` (or
+    /// `password_command`) for HTTPS, and its `identity_file` /
+    /// `identity_file_command` ahead of the host's usual SSH keys.
+    pub fn from_remote(remote: &Remote) -> Result<Self> {
+        Ok(GitAuth {
+            username: remote.username.clone(),
+            password: remote.resolve_password()?,
+            ssh_creds: ssh_credentials(remote)?,
+            helper_repo: None,
+        })
+    }
+
+    /// Credentials for a working clone conflux did not create: no conflux config
+    /// is involved, so it authenticates the way the user's own `git` would — the
+    /// SSH keys for the host (`~/.ssh/config` identities, ssh-agent, the default
+    /// key locations) and, for HTTPS, the `credential.helper` configured in
+    /// `repo`'s config (keyring, `git-credential-store`, and friends).
+    pub fn for_clone(repo_path: &Path, url: &str) -> Self {
+        GitAuth {
+            username: None,
+            password: None,
+            ssh_creds: ssh_host_credentials(url),
+            helper_repo: Some(repo_path.to_path_buf()),
+        }
+    }
+
+    /// Remote callbacks offering these credentials.
+    ///
+    /// libgit2 calls the credentials callback repeatedly, once per auth attempt,
+    /// until one succeeds (or a credential is reused). We walk `ssh_creds` one
+    /// entry per SSH_KEY invocation so each key/agent gets a turn instead of
+    /// retrying the same one forever.
+    pub fn callbacks(&self) -> RemoteCallbacks<'_> {
+        let user = self.username.clone();
+        let pass = self.password.clone();
+        // Candidate SSH keys/agent to offer. If none were resolved (e.g. an
+        // HTTPS remote, or an SSH host with no keys on disk), fall back to the
+        // agent so behaviour is unchanged for the agent-only case.
+        let ssh_creds = if self.ssh_creds.is_empty() {
+            vec![SshCred::Agent]
+        } else {
+            self.ssh_creds.clone()
+        };
+        let helper_repo = self.helper_repo.clone();
+        let mut ssh_attempt = 0usize;
+        let mut cb = RemoteCallbacks::new();
+        cb.credentials(move |url, username_from_url, allowed| {
+            let ssh_user = username_from_url.unwrap_or("git");
+            // Some SSH servers first ask only for the username.
+            if allowed.contains(CredentialType::USERNAME) {
+                return Cred::username(ssh_user);
+            }
+            if allowed.contains(CredentialType::SSH_KEY) {
+                let attempt = ssh_attempt;
+                ssh_attempt += 1;
+                return match ssh_creds.get(attempt) {
+                    Some(SshCred::Agent) => Cred::ssh_key_from_agent(ssh_user),
+                    Some(SshCred::KeyFile(path)) => Cred::ssh_key(ssh_user, None, path, None),
+                    Some(SshCred::KeyInline(key)) => {
+                        Cred::ssh_key_from_memory(ssh_user, None, key, None)
+                    }
+                    // Every candidate has been tried; stop retrying so libgit2
+                    // surfaces the auth failure instead of looping.
+                    None => Err(git2::Error::from_str(
+                        "no more SSH credentials to try (checked ssh-agent, \
+                         ~/.ssh/config identities, and default keys)",
+                    )),
+                };
+            }
+            if allowed.contains(CredentialType::USER_PASS_PLAINTEXT) {
+                if let Some(p) = &pass {
+                    return Cred::userpass_plaintext(user.as_deref().unwrap_or(""), p);
+                }
+                // No configured password: let the clone's own credential helper
+                // answer, as `git` itself would. Its config is opened here rather
+                // than held, so this stays a `Send` backend.
+                if let Some(path) = &helper_repo {
+                    let config = Repository::open(path)
+                        .and_then(|r| r.config())
+                        .or_else(|_| git2::Config::open_default())?;
+                    return Cred::credential_helper(&config, url, username_from_url);
+                }
+            }
+            Cred::default()
+        });
+        cb
+    }
 }
 
 impl GitBackend {
@@ -63,10 +167,8 @@ impl GitBackend {
             base,
             url: remote.url.clone(),
             branch: remote.branch.clone(),
-            username: remote.username.clone(),
-            password: remote.resolve_password()?,
             commit_msg_command: remote.commit_msg_command.clone(),
-            ssh_creds: ssh_credentials(remote)?,
+            auth: GitAuth::from_remote(remote)?,
         })
     }
 
@@ -107,53 +209,7 @@ impl GitBackend {
     }
 
     fn callbacks(&self) -> RemoteCallbacks<'_> {
-        let user = self.username.clone();
-        let pass = self.password.clone();
-        // Candidate SSH keys/agent to offer. If none were resolved (e.g. an
-        // HTTPS remote, or an SSH host with no keys on disk), fall back to the
-        // agent so behaviour is unchanged for the agent-only case.
-        let ssh_creds = if self.ssh_creds.is_empty() {
-            vec![SshCred::Agent]
-        } else {
-            self.ssh_creds.clone()
-        };
-        // libgit2 calls the credentials callback repeatedly, once per auth
-        // attempt, until one succeeds (or a credential is reused). We walk
-        // `ssh_creds` one entry per SSH_KEY invocation so each key/agent gets a
-        // turn instead of retrying the same one forever.
-        let mut ssh_attempt = 0usize;
-        let mut cb = RemoteCallbacks::new();
-        cb.credentials(move |_url, username_from_url, allowed| {
-            let ssh_user = username_from_url.unwrap_or("git");
-            // Some SSH servers first ask only for the username.
-            if allowed.contains(CredentialType::USERNAME) {
-                return Cred::username(ssh_user);
-            }
-            if allowed.contains(CredentialType::SSH_KEY) {
-                let attempt = ssh_attempt;
-                ssh_attempt += 1;
-                return match ssh_creds.get(attempt) {
-                    Some(SshCred::Agent) => Cred::ssh_key_from_agent(ssh_user),
-                    Some(SshCred::KeyFile(path)) => Cred::ssh_key(ssh_user, None, path, None),
-                    Some(SshCred::KeyInline(key)) => {
-                        Cred::ssh_key_from_memory(ssh_user, None, key, None)
-                    }
-                    // Every candidate has been tried; stop retrying so libgit2
-                    // surfaces the auth failure instead of looping.
-                    None => Err(git2::Error::from_str(
-                        "no more SSH credentials to try (checked ssh-agent, \
-                         ~/.ssh/config identities, and default keys)",
-                    )),
-                };
-            }
-            if allowed.contains(CredentialType::USER_PASS_PLAINTEXT) {
-                if let Some(p) = &pass {
-                    return Cred::userpass_plaintext(user.as_deref().unwrap_or(""), p);
-                }
-            }
-            Cred::default()
-        });
-        cb
+        self.auth.callbacks()
     }
 
     /// Open the existing clone (fetching + resetting to the remote) or clone fresh.
@@ -334,23 +390,41 @@ fn ssh_credentials(remote: &Remote) -> Result<Vec<SshCred>> {
     }
 
     // The remaining candidates only apply to SSH remotes.
-    if let Some(host) = ssh_host_from_url(&remote.url) {
-        // 2. Keys the user picked for this host in ~/.ssh/config.
-        for path in ssh_config_identity_files(&host) {
-            if path.is_file() && seen.insert(path.clone()) {
-                creds.push(SshCred::KeyFile(path));
+    for cred in ssh_host_credentials(&remote.url) {
+        if let SshCred::KeyFile(path) = &cred {
+            if !seen.insert(path.clone()) {
+                continue;
             }
         }
-        // 3. ssh-agent (keeps the previous behaviour working unchanged).
-        creds.push(SshCred::Agent);
-        // 4. Default key locations that actually exist.
-        for path in default_identity_files() {
-            if path.is_file() && seen.insert(path.clone()) {
-                creds.push(SshCred::KeyFile(path));
-            }
-        }
+        creds.push(cred);
     }
     Ok(creds)
+}
+
+/// The SSH credentials that apply to `url` purely from the host's environment —
+/// steps 2–4 of [`ssh_credentials`], with no conflux configuration involved. Empty
+/// for a non-SSH URL.
+fn ssh_host_credentials(url: &str) -> Vec<SshCred> {
+    let Some(host) = ssh_host_from_url(url) else {
+        return Vec::new();
+    };
+    let mut seen = std::collections::HashSet::new();
+    let mut creds = Vec::new();
+    // 2. Keys the user picked for this host in ~/.ssh/config.
+    for path in ssh_config_identity_files(&host) {
+        if path.is_file() && seen.insert(path.clone()) {
+            creds.push(SshCred::KeyFile(path));
+        }
+    }
+    // 3. ssh-agent (keeps the previous behaviour working unchanged).
+    creds.push(SshCred::Agent);
+    // 4. Default key locations that actually exist.
+    for path in default_identity_files() {
+        if path.is_file() && seen.insert(path.clone()) {
+            creds.push(SshCred::KeyFile(path));
+        }
+    }
+    creds
 }
 
 /// Extract the SSH host from a git remote URL, or `None` if it isn't SSH.
@@ -517,7 +591,8 @@ fn sanitize(name: &str) -> String {
 
 /// Default commit message, tagged with this host so a shared repo shows which
 /// machine pushed. Falls back to a plain message if the hostname is unavailable.
-fn default_commit_message() -> String {
+/// Shared with [`crate::gitrepo`], which commits into the user's own clone.
+pub(crate) fn default_commit_message() -> String {
     match hostname() {
         Some(h) => format!("conflux sync from {h}"),
         None => "conflux sync".to_string(),

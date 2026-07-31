@@ -7,6 +7,7 @@ pub mod backend;
 pub mod config;
 pub mod engine;
 pub mod error;
+pub mod gitrepo;
 pub mod hash;
 pub mod index;
 pub mod ipc;

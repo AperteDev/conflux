@@ -12,8 +12,14 @@
 # Every option below is commented out and shown at its default value, so this
 # file documents the defaults without changing them — uncomment only what you
 # want to override. You need at least one [[sync]] (and, unless it uses the
-# `remote_fs` shortcut, one [[remote]]) for the daemon to do anything.
-# Ready-to-copy examples live in the README.
+# `remote_fs` shortcut or `git_repo`, one [[remote]]) for the daemon to do
+# anything. Ready-to-copy examples live in the README.
+#
+# A [[sync]] does one of two jobs. Either it syncs FILES against a [[remote]] —
+# conflux compares the two trees and copies individual files, which is what most
+# of the options below describe — or it sets `git_repo` to keep an existing git
+# working clone up to date through git itself (commit, fetch, rebase, push). The
+# `git_repo` section marks which options apply in that mode.
 
 # ===========================================================================
 # [daemon] — daemon-wide settings, plus the default values inherited by syncs.
@@ -41,8 +47,10 @@
 # interval = "1h"
 
 # Cadence for periodic remote pulls — an extra pull-only run that catches
-# remote-side changes (a `watch` trigger only sees LOCAL edits). "0s" (or unset)
-# disables it.
+# remote-side changes (a `watch` trigger only sees LOCAL edits). "0s" disables
+# it. Unset means: every 5 minutes for anything git (a `git` remote or a
+# `git_repo` clone, neither of which can be watched from the remote side), and
+# off for every other backend.
 # pull_interval = "0s"
 
 # Empty-directory handling:
@@ -143,9 +151,10 @@
 #
 # # --- Mapping: which remote, which local dir, where on the remote ----------
 #
-# # Which remote this group syncs with. Set EXACTLY ONE of `remote` / `remote_fs`.
+# # What this group syncs against. Set EXACTLY ONE of `remote`, `remote_fs`, or
+# # `git_repo`.
 # #
-# # `remote` — id of a [[remote]] block defined above. (required unless remote_fs)
+# # `remote` — id of a [[remote]] block defined above.
 # remote = "example"
 # #
 # # `remote_fs` — shortcut for a filesystem target: give a directory path here
@@ -154,8 +163,24 @@
 # # expanded. This is the preferred way to mirror to a local directory (backup
 # # disk, testing) and it supports `trigger = "watch-both"`.
 # remote_fs = "/mnt/backup/conflux"
+# #
+# # `git_repo` — path to a git working clone (one with its own `.git`, as
+# # `git clone` leaves behind) to keep up to date THROUGH GIT: conflux commits
+# # local changes, fetches, fast-forwards or rebases, and pushes, using the clone's
+# # own current branch, upstream, and credentials. No [[remote]] is involved and
+# # no second copy of the tree exists. Leading `~` and $VARS are expanded, and the
+# # path doubles as this group's `local` root, so don't set `local` as well.
+# #
+# # In this mode git decides what is tracked, so the file-level options below
+# # (`remote_path`, `include`, `scope`, `deletions`, `empty_dirs`,
+# # `max_file_size`) do not apply and are rejected — use `.gitignore` instead.
+# # What DOES apply: `id`, `label`, `trigger` (except "watch-both"), `interval`,
+# # `debounce`, `pull_interval`, `commit_msg_command`, `profiles`. A conflicting
+# # rebase is aborted and reported rather than resolved; see the README.
+# git_repo = "~/notes"
 #
-# # Local root directory; leading `~` and $VARS are expanded. (required)
+# # Local root directory; leading `~` and $VARS are expanded. (required, unless
+# # `git_repo` supplies it)
 # local = "~/.config"
 #
 # # Path under the remote that mirrors `local`. Omit (or "") to use the remote's
@@ -207,13 +232,19 @@
 # #              the other.
 # deletions = "deny"
 #
+# # `git_repo` syncs only (optional): command whose stdout becomes the commit
+# # message (run via `sh -c` in the clone, so it can inspect the staged index).
+# # Defaults to "conflux sync from <hostname>". The [[remote]] field of the same
+# # name does this for a `git` backend.
+# commit_msg_command = "printf 'notes: %s' \"$(date -I)\""
+#
 # # --- When it syncs --------------------------------------------------------
 #
 # # How this group is triggered: "manual" (only `conflux sync`), "timer"
 # # (every `interval`), "watch" (on local file changes, debounced), or
 # # "watch-both" (like "watch" but also watches the remote side; requires a
 # # `filesystem` backend or a `remote_fs` shortcut — an error otherwise).
-# # (required)
+# # (default: "watch")
 # trigger = "watch"
 #
 # # Timer interval for `trigger = "timer"`. (default: inherits [daemon] interval)
@@ -223,7 +254,10 @@
 # debounce = "3s"
 #
 # # Periodic pull-only cadence to catch remote-side changes, independent of
-# # `trigger`. "0s" disables. (default: inherits remote → [daemon] pull_interval)
+# # `trigger`. For a `git_repo` sync this is the fetch-and-integrate interval.
+# # "0s" disables (and `conflux config validate` warns for a git sync, which would
+# # then never see other hosts' commits). (default: inherits remote → [daemon]
+# # pull_interval, then "5m" for anything git)
 # pull_interval = "5m"
 #
 # # --- Other behavior -------------------------------------------------------

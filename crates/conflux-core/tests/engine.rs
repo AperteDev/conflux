@@ -63,16 +63,15 @@ fn run_mode(cfg: &Config, index: &mut Index, empty_dirs: EmptyDirMode) -> SyncRe
         .max_file_size
         .or(remote.max_file_size)
         .unwrap_or(cfg.daemon.max_file_size);
-    // Resolve deletions the way the daemon does: sync → daemon.
-    let deletions = sync.deletions.unwrap_or(cfg.daemon.deletions);
     engine::sync_group(
         sync,
         backend.as_ref(),
         index,
         false,
         empty_dirs,
-        sync.scope,
-        deletions,
+        sync.scope(),
+        // Resolved the way the daemon does: sync, then [daemon].
+        sync.deletions.unwrap_or(cfg.daemon.deletions),
         max_file_size,
         &cfg.daemon.exclude,
     )

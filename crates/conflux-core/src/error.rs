@@ -31,6 +31,14 @@ pub enum Error {
     #[error("backend error: {0}")]
     Backend(String),
 
+    /// The sync cannot run until something outside conflux changes: a `git_repo`
+    /// that is not a clone, a detached HEAD, a rebase left in progress, a conflict
+    /// awaiting resolution. Retrying cannot help, so the daemon reports it once
+    /// rather than working through its retry backoff. The message is written for
+    /// the user and needs no prefix.
+    #[error("{0}")]
+    Precondition(String),
+
     /// The on-disk index could not be (de)serialized.
     #[error("index error: {0}")]
     Index(#[from] serde_json::Error),

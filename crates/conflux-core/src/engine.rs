@@ -182,7 +182,17 @@ impl SyncPlan {
 
 /// A stable, human-readable label for a sync group (`remote:remote_path`, or
 /// just `remote` when the group maps to the remote's root).
+///
+/// A `git_repo` group has no remote to name it, so it is labelled after the
+/// clone's directory — `~/notes` becomes `notes`.
 pub fn group_label(sync: &Sync) -> String {
+    if sync.is_git_repo() {
+        return sync
+            .local
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| sync.local.display().to_string());
+    }
     let remote = sync.remote_id();
     if sync.remote_path.is_empty() {
         remote.to_string()
@@ -217,7 +227,7 @@ pub fn run(
         &mut index,
         remote_refresh,
         empty_dirs,
-        sync.scope,
+        sync.scope(),
         deletions,
         max_file_size,
         exclude_defaults,
@@ -251,7 +261,7 @@ pub fn plan(
         backend.as_ref(),
         &index,
         empty_dirs,
-        sync.scope,
+        sync.scope(),
         deletions,
         max_file_size,
         exclude_defaults,
