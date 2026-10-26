@@ -42,6 +42,30 @@ pub struct Paths {
 /// The profile whose instance uses the un-suffixed base paths.
 pub const DEFAULT_PROFILE: &str = "default";
 
+/// The system daemon's config file, before any `$CONFLUX_CONFIG` override.
+pub const SYSTEM_CONFIG: &str = "/etc/conflux/config.toml";
+
+/// Check that `name` can name a profile: it becomes part of the state dir, the
+/// socket file, and the systemd instance (`conflux@<name>`), so only ASCII
+/// letters, digits, `_`, `-` and `.` are allowed, and it may not start with `.`
+/// or `-`.
+pub fn validate_profile(name: &str) -> Result<()> {
+    let valid = !name.is_empty()
+        && name.len() <= 64
+        && !name.starts_with(['.', '-'])
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'));
+    if valid {
+        Ok(())
+    } else {
+        Err(Error::Validation(format!(
+            "invalid profile name `{name}`: use 1-64 ASCII letters, digits, `_`, `-` or `.`, \
+             not starting with `.` or `-`"
+        )))
+    }
+}
+
 impl Paths {
     /// Resolve paths for the given mode and profile. `$CONFLUX_CONFIG` overrides
     /// the config path (which is always shared across profiles).
@@ -51,10 +75,15 @@ impl Paths {
     /// several instances (`conflux@desktop`, `conflux@laptop`, …) can run on one
     /// host without colliding. The `"default"` profile keeps the base paths for
     /// backward compatibility; any other profile is suffixed.
+    ///
+    /// Fails for a profile name [`validate_profile`] rejects.
     pub fn resolve(mode: RunMode, profile: Option<&str>) -> Result<Self> {
+        if let Some(profile) = profile {
+            validate_profile(profile)?;
+        }
         let mut paths = match mode {
             RunMode::System => Paths {
-                config: PathBuf::from("/etc/conflux/config.toml"),
+                config: PathBuf::from(SYSTEM_CONFIG),
                 state: PathBuf::from("/var/lib/conflux"),
                 socket: PathBuf::from("/run/conflux/conflux.sock"),
             },
@@ -119,6 +148,26 @@ mod tests {
         );
         // Config stays shared across profiles.
         assert_eq!(desktop.config, base.config);
+    }
+
+    #[test]
+    fn profile_names_that_could_escape_a_path_are_rejected() {
+        for bad in [
+            "",
+            "..",
+            ".hidden",
+            "-x",
+            "a/b",
+            "a b",
+            "dé",
+            &"x".repeat(65),
+        ] {
+            assert!(validate_profile(bad).is_err(), "{bad:?} accepted");
+            assert!(Paths::resolve(RunMode::System, Some(bad)).is_err());
+        }
+        for good in ["default", "desktop", "my-host.lan", "a_1"] {
+            assert!(validate_profile(good).is_ok(), "{good:?} rejected");
+        }
     }
 
     #[test]

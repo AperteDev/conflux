@@ -3,3 +3,4 @@
 Cargo.lock.orig
 /package/arch/
 !/package/arch/PKGBUILD
+/.playwright-mcp/

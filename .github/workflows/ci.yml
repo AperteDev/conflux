@@ -22,7 +22,14 @@ jobs:
   check:
     name: Check and test
     runs-on: ubuntu-24.04
+    # The whole workspace, the GTK app included: it needs libadwaita 1.7 or newer
+    # and blueprint-compiler, which Ubuntu 24.04 lacks.
+    container: fedora:45
     steps:
+      - name: Install the build dependencies
+        run: >-
+          dnf install -y --setopt=install_weak_deps=False
+          git gcc openssl-devel zlib-devel gtk4-devel libadwaita-devel blueprint-compiler
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:

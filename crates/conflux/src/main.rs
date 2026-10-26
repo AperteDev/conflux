@@ -132,7 +132,7 @@ fn run(cli: &Cli, log_reload: &LogReload) -> anyhow::Result<ExitCode> {
             if let Some(profile) = &cli.profile {
                 config.daemon.profile = Some(profile.clone());
             }
-            daemon::run(config, paths).map(|()| ExitCode::SUCCESS)
+            daemon::run(config, paths, mode == RunMode::System).map(|()| ExitCode::SUCCESS)
         }
         Command::Status => {
             let response = control::send(&paths.socket, &Request::Status)?;

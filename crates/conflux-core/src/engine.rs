@@ -166,6 +166,71 @@ pub enum PlanOp {
     DeleteRemoteDir,
 }
 
+impl PlanOp {
+    /// A one-character direction marker: `↑` uploads, `↓` downloads, `✗`
+    /// deletes, `!` conflicts, `·` skips.
+    pub fn symbol(&self) -> char {
+        match self {
+            PlanOp::Push { .. } | PlanOp::PushPreserveRemote | PlanOp::CreateRemoteDir => '↑',
+            PlanOp::Pull { .. } | PlanOp::PullPreserveLocal | PlanOp::CreateLocalDir => '↓',
+            PlanOp::DeleteLocal
+            | PlanOp::DeleteRemote
+            | PlanOp::DeleteLocalDir
+            | PlanOp::DeleteRemoteDir => '✗',
+            PlanOp::Conflict { .. } => '!',
+            PlanOp::OversizeSkip { .. } => '·',
+        }
+    }
+
+    /// A short human description, e.g. `upload (new)` or `conflict (keep local)`.
+    pub fn describe(&self) -> String {
+        match self {
+            PlanOp::Push { update: false } => "upload (new)".into(),
+            PlanOp::Push { update: true } => "upload".into(),
+            PlanOp::Pull { update: false } => "download (new)".into(),
+            PlanOp::Pull { update: true } => "download".into(),
+            PlanOp::DeleteLocal => "delete local".into(),
+            PlanOp::DeleteRemote => "delete remote".into(),
+            PlanOp::Conflict { winner } => format!("conflict (keep {})", winner.side()),
+            PlanOp::PullPreserveLocal => "download (local kept as conflict copy)".into(),
+            PlanOp::PushPreserveRemote => "upload (remote kept as conflict copy)".into(),
+            PlanOp::OversizeSkip { size } => {
+                format!("skip ({} over max_file_size)", human_size(*size))
+            }
+            PlanOp::CreateLocalDir => "create local dir".into(),
+            PlanOp::CreateRemoteDir => "create remote dir".into(),
+            PlanOp::DeleteLocalDir => "delete local dir".into(),
+            PlanOp::DeleteRemoteDir => "delete remote dir".into(),
+        }
+    }
+}
+
+impl Winner {
+    /// `"local"` or `"remote"`.
+    pub fn side(&self) -> &'static str {
+        match self {
+            Winner::Local => "local",
+            Winner::Remote => "remote",
+        }
+    }
+}
+
+/// Format a byte count with a binary unit, e.g. `1.5MB`.
+pub fn human_size(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let mut size = bytes as f64;
+    let mut unit = 0;
+    while size >= 1024.0 && unit < UNITS.len() - 1 {
+        size /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes}B")
+    } else {
+        format!("{size:.1}{}", UNITS[unit])
+    }
+}
+
 /// The full set of changes a sync would make, computed without applying them.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct SyncPlan {

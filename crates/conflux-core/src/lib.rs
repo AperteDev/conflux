@@ -5,6 +5,7 @@
 
 pub mod backend;
 pub mod config;
+pub mod config_edit;
 pub mod engine;
 pub mod error;
 pub mod gitrepo;

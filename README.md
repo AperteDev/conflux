@@ -340,6 +340,10 @@ sudo systemctl enable --now conflux              # system install
 For debugging, run `conflux daemon` in the foreground instead, with
 `CONFLUX_LOG=debug` for detail.
 
+Profile names become part of the unit, socket and state directory names, so they
+are limited to 1-64 ASCII letters, digits, `_`, `-` and `.`, not starting with
+`.` or `-`.
+
 > **The daemon syncs every active group once at startup**, whatever its `trigger`
 > — `manual` only disables *automatic* triggers after that first run. Starting or
 > reloading the daemon therefore syncs for real immediately; there is no "start
@@ -359,6 +363,12 @@ conflux reload              # re-read the config without restarting
 conflux config validate     # check the config (also: show, paths)
 ```
 
+Any local user can read a system daemon's status (`conflux --system status`):
+its socket is open to everyone, as its config file already is. Syncing, dry runs
+and reloading a system daemon need root, the `conflux` service user, or
+membership in the `conflux` group (`sudo usermod -aG conflux "$USER"`, then log in
+again).
+
 A dry run (`-n`) prints one line per path — `↑` upload, `↓` download, `✗` delete,
 `!` conflict with its newer-wins winner, `·` skip. It fetches the current remote
 state to compare against, but never writes, deletes, or pushes. Conflicts are
@@ -372,8 +382,23 @@ new group's direction and filters, bring it up in a throwaway setup first: point
 `--config` at a temp file whose group uses a scratch directory or a `filesystem`
 remote, run `conflux daemon` in the foreground, edit files, and watch `-n`.
 
+## GTK app (preview)
+
+`conflux-gtk` is an optional GNOME (libadwaita) app for the same config and
+daemons; the config file stays the source of truth, and nothing needs the app.
+This preview only reads: it shows the syncs, remotes and daemons of your user and
+of the system, with each sync's live status and where each setting comes from,
+and it can run a sync or a dry run. Editing comes later (see the roadmap).
+
+It is not packaged yet. To try it, install GTK 4, libadwaita 1.7 or newer and
+`blueprint-compiler`, then, with Rust 1.92 or newer:
+
+```sh
+cargo run --release -p conflux-gtk
+```
+
 ## Roadmap
 
-Planned work, including an optional GTK (libadwaita) app for managing the user
-and system daemons, is tracked in [`docs/ROADMAP.md`](docs/ROADMAP.md). Changes
-in each release are listed in [`docs/CHANGELOG.md`](docs/CHANGELOG.md).
+Planned work, including the rest of the GTK app, is tracked in
+[`docs/ROADMAP.md`](docs/ROADMAP.md). Changes in each release are listed in
+[`docs/CHANGELOG.md`](docs/CHANGELOG.md).

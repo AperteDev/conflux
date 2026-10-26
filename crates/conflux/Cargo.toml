@@ -28,3 +28,4 @@ tracing-subscriber = { workspace = true }
 tokio = { workspace = true }
 notify = { workspace = true }
 notify-debouncer-full = { workspace = true }
+libc = "0.2"

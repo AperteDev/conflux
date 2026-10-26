@@ -11,6 +11,7 @@ Status markers: `[ ]` planned, `[~]` in progress, `[x]` done.
 - 1.1.0 released: daemon + CLI in one binary, WebDAV / Git / filesystem backends, `git_repo`
   syncs of an existing clone, triggers, scopes, profiles, `sync --dry-run`, SSH key selection,
   systemd units, Arch packages. Details in [`CHANGELOG.md`](CHANGELOG.md).
+- Unreleased: the read-only GTK app preview (steps 1 and 2 below).
 
 ## GTK frontend (`conflux-gtk`)
 
@@ -33,17 +34,23 @@ the system scope.
   `dev.aperte.conflux.manage`, files `dev.aperte.Conflux.desktop`,
   `dev.aperte.Conflux.metainfo.xml`, `dev.aperte.conflux.policy`), so the repository can move to
   the AperteDev organization without renames.
-- Rust with `gtk4` + `libadwaita` (at least 1.7, for `AdwToggleGroup`), `zbus` for systemd and
-  logind. Static views are Blueprint files compiled into a GResource by `build.rs`; dynamic rows
-  stay in Rust code.
+- Rust with `gtk4` 0.11 + `libadwaita` 0.9 (libadwaita 1.7 or newer, for `AdwToggleGroup`);
+  the crate needs Rust 1.92, the daemon and CLI stay at 1.85. systemd and logind are reached
+  through gio's D-Bus (`gio::DBusConnection`) on GTK's own main loop rather than `zbus`, so no
+  second async runtime. Static views are Blueprint files compiled by `build.rs` and loaded with
+  `gtk::Builder` (as in Todav); dynamic rows stay in Rust code.
 - Layout: `AdwApplicationWindow` > `AdwToolbarView` > `AdwNavigationView`. The header bar holds
   an `AdwToggleGroup` (User | System) at the start, an `AdwViewSwitcher` (Syncs | Remotes) in the
   middle (an `AdwViewSwitcherBar` when narrow), and `[+]` plus the main menu (Preferences, Open
   config in editor, About) at the end.
 - System socket: mode `0666`, and the daemon checks the peer's credentials (`SO_PEERCRED`).
   `Status` and `Info` are open to everyone (the config they describe is already world-readable);
-  `Sync`, `Plan` and `Reload` need root, the service user or a member of the `conflux` group.
-  The GUI sends those through the unlocked helper.
+  `Sync`, `Plan` and `Reload` need root, the service user or a member of the `conflux` group
+  (supplementary groups read with `SO_PEERGROUPS`). The GUI sends those through the unlocked
+  helper. A user daemon's socket keeps its default mode in the private `$XDG_RUNTIME_DIR`.
+- Profile names: 1-64 ASCII letters, digits, `_`, `-` and `.`, not starting with `.` or `-`
+  (`paths::validate_profile`, checked by `Paths::resolve`). `.` is allowed so host names work
+  as profiles.
 - System unlock: one `pkexec` launch of a long-lived, minimal `conflux-helper` (newline-delimited
   JSON over stdin/stdout). One polkit prompt per unlock; lock (button, idle timeout of 5 min,
   window closed, GUI gone so stdin hits EOF) ends the helper.
@@ -56,7 +63,7 @@ the system scope.
 +---------------------------------------------------------------+
 |  Some settings are locked                        [Unlock...]  |  System only
 +---------------------------------------------------------------+
-|  Instances                                [Add instance...]   |
+|  Daemons                                  [Add instance...]   |
 |   (o) conflux.service        Running   [Start at login (x)] : |
 |   ( ) conflux@desktop        Inactive  [               ( )] : |
 |                                                               |
@@ -68,10 +75,14 @@ the system scope.
 +---------------------------------------------------------------+
 ```
 
-- **Syncs page:** the Instances group (below), then the sync groups from the config with live
-  status (last run, summary, error, a spinner while running). Row actions: Sync now, Dry run (a
-  dialog with the plan, same markers as the CLI), Edit, Delete. Groups outside the shown
-  instance's profile are dimmed, with their profile tags.
+- **Syncs page:** config warnings, the Daemons group (instances, below), then the sync groups
+  from the config with live status (last run, summary, error, a spinner while running). Row
+  actions: Sync now, a menu with Dry run (a dialog with the plan) and Open local folder; Edit
+  and Delete come with editing. Groups no running daemon runs are dimmed, with their profiles.
+  A config the daemon would refuse shows a banner with the error; its syncs are still named
+  as the daemon names them (`Config::parse_unvalidated`), so their status keeps showing.
+- Only the shown scope is polled, every 3 s while the window is visible; rows are rebuilt only
+  when the config text or the set of daemons changes, and updated in place otherwise.
 - **Sync detail page:** preference groups following `config.example.toml`: Identity (id,
   label), Mapping (remote, `remote_fs` or `git_repo`; local, remote_path), What (include,
   exclude, scope, deletions), When (trigger, interval, debounce, pull_interval), Other
@@ -135,8 +146,7 @@ An instance is one daemon of a scope and profile: `conflux.service` for `default
   at login" / "Start at boot"), and a menu with Restart, Reload, View log, Remove.
 - **Detail page:** unit, socket, state dir, the config path the daemon reads (from `Info`), and
   every sync group with a switch for its membership in this profile.
-- **Add instance:** profile name checked against `[A-Za-z0-9_-]+` (one check in `conflux-core`,
-  used by the CLI too); a checklist of syncs to include, written to their `profiles` (a sync
+- **Add instance:** profile name checked by `paths::validate_profile` (as the CLI does); a checklist of syncs to include, written to their `profiles` (a sync
   without `profiles` is implicitly in `default`, so adding `desktop` writes
   `["default", "desktop"]`); "Start now" and "Start at login/boot".
 - **Remove instance:** stop and disable the unit; optionally drop the profile from the syncs and
@@ -173,20 +183,70 @@ data/                   .desktop, metainfo, icons, polkit policy, gresource
 
 ### Steps
 
-1. [ ] **Core prep** (no UI): move the IPC client; `GroupStatus` fields and `Info`;
+1. [x] **Core prep** (no UI): move the IPC client; `GroupStatus` fields and `Info`;
    `config_edit` with tests; shared profile-name check; system socket `0666` with
    peer-credential checks.
-2. [ ] **Read-only GUI:** window, header, lists, live status, instance discovery and states,
-   Sync now and Dry run in the user scope.
-3. [ ] **Editing (user scope):** detail pages, add/delete dialogs, Preferences, file monitor,
-   validation, automatic reload.
+2. [x] **Read-only GUI:** window, header, lists, live status, instance discovery and states,
+   Sync now and Dry run (in both scopes; a system daemon refuses them unless the user may act
+   on it), read-only detail pages of syncs and remotes showing where each value comes from.
+3. [ ] **Editing (user scope):** editable detail pages, add/delete dialogs, Preferences, file
+   monitor, validation, automatic reload.
 4. [ ] **Instance management (user scope):** add and remove, enable switches, profile
    membership, lingering, log viewer.
 5. [ ] **System unlock:** helper and polkit policy, banner and lock binding, privileged writes,
    unit control and IPC, journal, state removal, automatic re-lock.
-6. [ ] **Packaging:** split PKGBUILD (`conflux`, `conflux-gtk`, helper), `install.sh --gtk`, a CI
-   job building the GUI (a container with libadwaita >= 1.7; the static cross builds stay
-   CLI-only), README section, screenshots.
+6. [ ] **Packaging, Arch and tarballs:** the app's data (icon, replacing the stand-in in About;
+   `.desktop` file; metainfo; polkit policy), the two packages split as in
+   [Packages](#packages) in the PKGBUILD and the AUR, `install.sh --gtk`, a release tarball of
+   the app, screenshots. Done already: CI's check job builds and tests the app in a Fedora
+   container, the README has a preview section.
+7. [ ] **Debian and Ubuntu:** `.deb` packages of both, see [Packages](#packages).
+8. [ ] **Fedora COPR:** an RPM spec with both packages, built on COPR.
+9. [ ] **Flatpak:** the app alone, user scope, see [Packages](#packages).
+
+## Packages
+
+Two packages from the one source tree, in every format, released together with one version:
+
+- **`conflux`**: the daemon and CLI, `config.example.toml`, the systemd units. No GTK, so servers
+  and headless hosts install only this.
+- **`conflux-gtk`**: the app, `conflux-helper` (only the app uses it), the polkit policy, the
+  `.desktop` file, the metainfo and the icons. Depends on `conflux` of the same version and on
+  GTK 4 and libadwaita 1.7 or newer.
+
+Shared groundwork:
+
+- The Release workflow keeps cutting both at once. `scripts/release.py` also sets the version
+  in the RPM spec (with a changelog entry) and in the Debian packaging, and writes the release
+  notes into the metainfo's `<releases>` (as in Todav).
+- The `conflux` service user comes from a `sysusers.d/conflux.conf` instead of `useradd` in
+  `install.sh`, so every package creates it the same way.
+- CI builds each package on every push and installs it in a clean container, so a missing
+  dependency fails the build; the Release workflow attaches them to the GitHub release.
+
+Per format:
+
+- **Arch** (step 6): the in-repo `PKGBUILD` becomes a split package, `conflux-git` and
+  `conflux-gtk-git`; on the AUR, `conflux` and `conflux-bin` get `conflux-gtk` and
+  `conflux-gtk-bin` next to them. The app's binary tarball is built on the oldest supported
+  distribution, so its glibc runs on newer ones; the CLI tarballs stay static builds.
+- **Debian and Ubuntu** (step 7): `scripts/deb.sh` makes a `.deb` from a staged install tree
+  (as in Todav), `dpkg-shlibdeps` fills in the library dependencies. `conflux` for amd64 and
+  arm64 from the static binaries, so it installs on any release; `conflux-gtk` built on the
+  first Ubuntu LTS with libadwaita 1.7 (26.04). Attached to GitHub releases; an apt repository
+  can come later.
+- **Fedora COPR** (step 8): `rpm/conflux.spec` with `conflux-gtk` as a subpackage, systemd
+  scriptlets for the system and user units, built by COPR from `.copr/Makefile` on each
+  release tag.
+- **Flatpak** (step 9), `dev.aperte.Conflux`: the app only; the daemon comes from the host's
+  `conflux` package, and the app says so when it finds none. User scope only: a sandbox can
+  neither run `pkexec` nor reach `/run/conflux`, so the System toggle is hidden there.
+  Permissions: `--filesystem=xdg-config/conflux` for the config, the user socket, and
+  `--talk-name=org.freedesktop.systemd1` for the user's units. That needs the user socket in
+  a directory of its own (`$XDG_RUNTIME_DIR/conflux/`), which the sandbox can be given; the
+  daemon moves it there first, with the CLI and app still finding a socket at the old path.
+  The bundle is built in CI and attached to releases; whether to submit it to Flathub, which
+  asks for apps that work on their own, is decided then.
 
 ## Later
 
@@ -194,4 +254,3 @@ data/                   .desktop, metainfo, icons, polkit policy, gresource
 - Keyring helper for `password_command` (the system daemon cannot reach a user keyring).
 - Event stream from the daemon instead of status polling; desktop notifications on sync errors.
 - Translations (gettext).
-- Flatpak of the GUI, user scope only (the system scope cannot work from a sandbox).

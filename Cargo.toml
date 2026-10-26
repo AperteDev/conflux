@@ -1,6 +1,9 @@
 [workspace]
 resolver = "2"
-members = ["crates/conflux-core", "crates/conflux"]
+members = ["crates/conflux-core", "crates/conflux", "crates/conflux-gtk"]
+# The GUI needs GTK and libadwaita dev libraries; a plain `cargo build` / `cargo
+# test` skips it, `-p conflux-gtk` or `--workspace` includes it.
+default-members = ["crates/conflux-core", "crates/conflux"]
 
 [workspace.package]
 version = "1.1.0"
@@ -16,6 +19,7 @@ conflux-core = { path = "crates/conflux-core" }
 # shared third-party deps
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
+toml_edit = "0.22"
 serde_json = "1"
 thiserror = "2"
 anyhow = "1"

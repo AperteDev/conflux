@@ -316,6 +316,14 @@ impl Config {
         Ok(config)
     }
 
+    /// Parse a config as written: checked against the schema, but with nothing
+    /// resolved or validated — `~` and `$VARS` stay unexpanded, `remote_fs` and
+    /// `git_repo` shortcuts stay as they are, and kind-dependent defaults are
+    /// not filled in. For showing a config the way its author wrote it.
+    pub fn parse_raw(text: &str) -> Result<Self> {
+        Ok(toml::from_str(text)?)
+    }
+
     /// Parse a config from a TOML string (used by tests); also validates.
     pub fn from_toml_str(text: &str) -> Result<Self> {
         let mut config: Config = toml::from_str(text)?;
@@ -331,10 +339,26 @@ impl Config {
     /// The order matters: the defaults key on each sync's backend, which is only
     /// known once the shortcut remotes exist.
     fn resolve(&mut self) -> Result<()> {
+        self.prepare()?;
+        self.validate()
+    }
+
+    /// Everything [`Config::resolve`] does before validating.
+    fn prepare(&mut self) -> Result<()> {
         self.normalize();
         self.materialize_inline_remotes()?;
         self.apply_kind_defaults();
-        self.validate()
+        Ok(())
+    }
+
+    /// Parse and resolve a config like [`Config::from_toml_str`], but skip the
+    /// cross-field checks, so a config with one bad setting still shows how the
+    /// daemon would name and run each group. Fails only when a sync names no
+    /// target, or more than one, as then it cannot be resolved at all.
+    pub fn parse_unvalidated(text: &str) -> Result<Self> {
+        let mut config: Config = toml::from_str(text)?;
+        config.prepare()?;
+        Ok(config)
     }
 
     /// Expand `~`/env vars in local roots and trim slashes off remote paths.
@@ -827,10 +851,11 @@ fn parse_byte_size(s: &str) -> std::result::Result<u64, String> {
     Ok((value * mult) as u64)
 }
 
-/// Format a byte count back to a compact decimal size string for `config show`,
-/// preferring the largest unit that divides it evenly (e.g. `100000000` →
-/// `"100MB"`); falls back to a bare byte count (which also covers `0`).
-fn format_byte_size(n: u64) -> String {
+/// Format a byte count back to a compact decimal size string for `config show`
+/// and UIs, preferring the largest unit that divides it evenly (e.g.
+/// `100000000` → `"100MB"`); falls back to a bare byte count (which also covers
+/// `0`).
+pub fn format_byte_size(n: u64) -> String {
     const UNITS: &[(&str, u64)] = &[
         ("TB", 1_000_000_000_000),
         ("GB", 1_000_000_000),

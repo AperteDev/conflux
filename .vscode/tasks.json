@@ -23,6 +23,15 @@
 			"detail": "cargo run -- daemon (foreground; Ctrl+C to stop)"
 		},
 		{
+			"label": "run gui",
+			"type": "shell",
+			"command": "cargo",
+			"args": ["run", "-p", "conflux-gtk"],
+			"problemMatcher": ["$rustc"],
+			"group": "none",
+			"detail": "cargo run -p conflux-gtk (the GTK app; needs GTK, libadwaita and blueprint-compiler)"
+		},
+		{
 			"label": "release: run the Release workflow",
 			"type": "shell",
 			"command": "gh",

@@ -15,8 +15,11 @@ use anyhow::Context;
 use conflux_core::config::{Remote, Sync};
 use conflux_core::engine::{self, group_label, SyncSummary};
 use conflux_core::gitrepo;
-use conflux_core::ipc::{GroupOutcome, GroupPlan, GroupStatus, Request, Response, SyncTarget};
+use conflux_core::ipc::{
+    DaemonInfo, GroupOutcome, GroupPlan, GroupStatus, Request, Response, SyncTarget,
+};
 use conflux_core::model::{Deletions, EmptyDirMode, RemoteKind};
+use conflux_core::paths::DEFAULT_PROFILE;
 use conflux_core::{Config, Paths};
 use notify::{RecursiveMode, Watcher};
 use notify_debouncer_full::{new_debouncer, DebounceEventResult};
@@ -32,6 +35,76 @@ struct RuntimeStatus {
     last_run: Option<u64>,
     last_summary: Option<SyncSummary>,
     last_error: Option<String>,
+    running: bool,
+}
+
+/// Who may send the requests that act (`Sync`, `Plan`, `Reload`) rather than
+/// only read (`Status`, `Info`): root and the daemon's own user always; on a
+/// system daemon, whose socket any local user can open, also members of its
+/// group (`conflux`).
+#[derive(Clone, Copy)]
+struct Access {
+    uid: u32,
+    group: Option<u32>,
+}
+
+impl Access {
+    fn for_mode(system: bool) -> Self {
+        // SAFETY: `geteuid`/`getegid` take no arguments and cannot fail.
+        let (uid, gid) = unsafe { (libc::geteuid(), libc::getegid()) };
+        Access {
+            uid,
+            group: system.then_some(gid),
+        }
+    }
+
+    /// Whether the peer on `stream` may send acting requests.
+    fn allows(&self, stream: &UnixStream) -> bool {
+        let Ok(cred) = stream.peer_cred() else {
+            return false;
+        };
+        if cred.uid() == 0 || cred.uid() == self.uid {
+            return true;
+        }
+        match self.group {
+            Some(gid) => cred.gid() == gid || peer_groups(stream).contains(&gid),
+            None => false,
+        }
+    }
+}
+
+/// The supplementary groups of the process on the other end of `stream`
+/// (`SO_PEERGROUPS`, Linux 4.13+); empty when the kernel cannot tell.
+fn peer_groups(stream: &UnixStream) -> Vec<u32> {
+    use std::os::fd::AsRawFd;
+    let mut groups: Vec<libc::gid_t> = vec![0; 64];
+    loop {
+        let mut len = (groups.len() * std::mem::size_of::<libc::gid_t>()) as libc::socklen_t;
+        // SAFETY: the buffer is valid for `len` bytes, and the kernel writes at
+        // most that many, reporting the size it needs in `len`.
+        let rc = unsafe {
+            libc::getsockopt(
+                stream.as_raw_fd(),
+                libc::SOL_SOCKET,
+                libc::SO_PEERGROUPS,
+                groups.as_mut_ptr().cast(),
+                &mut len,
+            )
+        };
+        let count = len as usize / std::mem::size_of::<libc::gid_t>();
+        if rc == 0 {
+            groups.truncate(count);
+            return groups;
+        }
+        // Too small: the kernel said how big it has to be.
+        if std::io::Error::last_os_error().raw_os_error() == Some(libc::ERANGE)
+            && count > groups.len()
+        {
+            groups.resize(count, 0);
+            continue;
+        }
+        return Vec::new();
+    }
 }
 
 /// Mutable daemon state behind a short-lived lock (never held across `.await`).
@@ -100,15 +173,19 @@ impl Triggers {
 }
 
 /// Entry point: build the runtime, install triggers, and run until a signal.
-pub fn run(config: Config, paths: Paths) -> anyhow::Result<()> {
+///
+/// `system` marks a system-wide daemon: its socket is opened to every local
+/// user, who can read the status, while acting requests stay limited (see
+/// [`Access`]).
+pub fn run(config: Config, paths: Paths, system: bool) -> anyhow::Result<()> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .context("failed to build tokio runtime")?;
-    runtime.block_on(run_async(config, paths))
+    runtime.block_on(run_async(config, paths, system))
 }
 
-async fn run_async(config: Config, paths: Paths) -> anyhow::Result<()> {
+async fn run_async(config: Config, paths: Paths, system: bool) -> anyhow::Result<()> {
     let socket_path = paths.socket.clone();
     let state: Shared = Arc::new(Mutex::new(DaemonState {
         config,
@@ -154,7 +231,7 @@ async fn run_async(config: Config, paths: Paths) -> anyhow::Result<()> {
         }
     }
 
-    let listener = bind_socket(&socket_path)?;
+    let listener = bind_socket(&socket_path, system)?;
     let (reload_tx, mut reload_rx) = mpsc::unbounded_channel::<oneshot::Sender<(bool, String)>>();
     tokio::spawn(serve_ipc(
         state.clone(),
@@ -162,6 +239,7 @@ async fn run_async(config: Config, paths: Paths) -> anyhow::Result<()> {
         submit.clone(),
         listener,
         reload_tx.clone(),
+        Access::for_mode(system),
     ));
 
     info!(socket = %socket_path.display(), "conflux daemon started");
@@ -277,6 +355,7 @@ async fn run_one(
     };
 
     let _guard = sync_lock.lock().await;
+    set_running(state, label, true);
     // A periodic remote-refresh run only brings changes in — call that "pulled"
     // rather than "synced".
     let verb = if remote_refresh { "pulled" } else { "synced" };
@@ -324,6 +403,7 @@ async fn run_one(
         entry.last_run = Some(now_secs());
         entry.last_summary = summary.clone();
         entry.last_error = error.clone();
+        entry.running = false;
     }
 
     Some(RunResult {
@@ -334,6 +414,12 @@ async fn run_one(
         },
         retryable,
     })
+}
+
+/// Mark whether `label` is being synced, for [`status_list`].
+fn set_running(state: &Shared, label: &str, running: bool) {
+    let mut st = state.lock().unwrap();
+    st.status.entry(label.to_string()).or_default().running = running;
 }
 
 /// Compute a dry-run plan for one group without applying it. Like [`run_one`] it
@@ -586,6 +672,7 @@ async fn serve_ipc(
     submit: Submitter,
     listener: UnixListener,
     reload_tx: mpsc::UnboundedSender<oneshot::Sender<(bool, String)>>,
+    access: Access,
 ) {
     loop {
         match listener.accept().await {
@@ -596,7 +683,7 @@ async fn serve_ipc(
                 let reload_tx = reload_tx.clone();
                 tokio::spawn(async move {
                     if let Err(e) =
-                        handle_conn(stream, &state, &sync_lock, &submit, &reload_tx).await
+                        handle_conn(stream, &state, &sync_lock, &submit, &reload_tx, access).await
                     {
                         warn!("ipc connection error: {e}");
                     }
@@ -615,7 +702,9 @@ async fn handle_conn(
     sync_lock: &Arc<tokio::sync::Mutex<()>>,
     submit: &Submitter,
     reload_tx: &mpsc::UnboundedSender<oneshot::Sender<(bool, String)>>,
+    access: Access,
 ) -> anyhow::Result<()> {
+    let allowed = access.allows(&stream);
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
     if reader.read_line(&mut line).await? == 0 {
@@ -623,7 +712,13 @@ async fn handle_conn(
     }
 
     let response = match serde_json::from_str::<Request>(line.trim()) {
+        Ok(request) if !allowed && !request.is_read_only() => Response::Error(
+            "permission denied: only root, the daemon's user, or members of its group may \
+             sync, dry-run, or reload this daemon"
+                .into(),
+        ),
         Ok(Request::Status) => Response::Status(status_list(&state.lock().unwrap())),
+        Ok(Request::Info) => Response::Info(info(&state.lock().unwrap())),
         Ok(Request::Sync(target)) => {
             let labels = {
                 let st = state.lock().unwrap();
@@ -699,14 +794,40 @@ fn reload(state: &Shared) -> (bool, String) {
     }
 }
 
-fn bind_socket(path: &Path) -> anyhow::Result<UnixListener> {
+/// Bind the control socket. A system daemon's socket is opened to every local
+/// user (mode `0666`), who may then read its status; [`Access`] decides who may
+/// do more. A user daemon's keeps the default mode, normally in the private
+/// `$XDG_RUNTIME_DIR`.
+fn bind_socket(path: &Path, system: bool) -> anyhow::Result<UnixListener> {
+    use std::os::unix::fs::PermissionsExt;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("create socket dir {}", parent.display()))?;
     }
     // Remove a stale socket from a previous run.
     let _ = std::fs::remove_file(path);
-    UnixListener::bind(path).with_context(|| format!("bind socket {}", path.display()))
+    let listener =
+        UnixListener::bind(path).with_context(|| format!("bind socket {}", path.display()))?;
+    if system {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o666))
+            .with_context(|| format!("open socket {} to local users", path.display()))?;
+    }
+    Ok(listener)
+}
+
+/// What [`Request::Info`] reports.
+fn info(st: &DaemonState) -> DaemonInfo {
+    DaemonInfo {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        profile: st
+            .config
+            .daemon
+            .profile
+            .clone()
+            .unwrap_or_else(|| DEFAULT_PROFILE.to_string()),
+        config: st.paths.config.display().to_string(),
+        pid: std::process::id(),
+    }
 }
 
 fn resolve_debounce(config: &Config, sync: &Sync) -> Duration {
@@ -812,6 +933,8 @@ fn status_list(st: &DaemonState) -> Vec<GroupStatus> {
             let label = group_label(s);
             let rt = st.status.get(&label).cloned().unwrap_or_default();
             GroupStatus {
+                id: s.id.clone(),
+                running: rt.running,
                 label,
                 // A `git_repo` group syncs through the clone's own remote, which
                 // lives in the repository rather than in this config.
@@ -840,6 +963,52 @@ fn now_secs() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn peer_groups_are_the_callers_supplementary_groups() {
+        let (a, _b) = UnixStream::pair().unwrap();
+        // SAFETY: a zero-length buffer only asks for the count.
+        let count = unsafe { libc::getgroups(0, std::ptr::null_mut()) };
+        let mut own = vec![0; count as usize];
+        // SAFETY: the buffer holds `count` entries.
+        unsafe { libc::getgroups(count, own.as_mut_ptr()) };
+        let mut peer = peer_groups(&a);
+        peer.sort_unstable();
+        own.sort_unstable();
+        assert_eq!(peer, own);
+    }
+
+    #[tokio::test]
+    async fn access_allows_the_owner_and_group_members_only() {
+        let (a, _b) = UnixStream::pair().unwrap();
+        let me = Access::for_mode(false);
+        assert!(me.allows(&a), "the daemon's own user");
+        // A peer that is neither root nor the daemon's user (as seen from a
+        // daemon running as someone else) gets in only through the group.
+        if me.uid != 0 {
+            let other = Access {
+                uid: me.uid + 1,
+                group: None,
+            };
+            assert!(!other.allows(&a), "a user daemon admits no one else");
+            // SAFETY: `getegid` cannot fail.
+            let gid = unsafe { libc::getegid() };
+            let system = Access {
+                uid: me.uid + 1,
+                group: Some(gid),
+            };
+            assert!(system.allows(&a), "a member of the daemon's group");
+        }
+    }
+
+    #[test]
+    fn only_status_and_info_are_read_only() {
+        assert!(Request::Status.is_read_only());
+        assert!(Request::Info.is_read_only());
+        assert!(!Request::Reload.is_read_only());
+        assert!(!Request::Sync(SyncTarget::All).is_read_only());
+        assert!(!Request::Plan(SyncTarget::All).is_read_only());
+    }
 
     fn sync_named(config: &Config, remote_path: &str) -> Sync {
         config

@@ -38,7 +38,9 @@ build() {
 check() {
 	cd "$_pkgbase"
 	export RUSTUP_TOOLCHAIN=stable
-	cargo test --frozen --workspace
+	# The daemon and CLI only (the workspace's default members): the GTK app
+	# needs GTK and libadwaita to build.
+	cargo test --frozen
 }
 
 package() {

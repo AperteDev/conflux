@@ -1,0 +1,115 @@
+using Gtk 4.0;
+using Adw 1;
+
+Adw.ApplicationWindow window {
+  title: _("Conflux");
+  default-width: 780;
+  default-height: 680;
+  width-request: 360;
+  height-request: 294;
+
+  Adw.Breakpoint {
+    condition ("max-width: 600sp")
+
+    setters {
+      switcher_bar.reveal: true;
+      header.title-widget: null;
+    }
+  }
+
+  content: Adw.ToastOverlay toasts {
+    // Detail pages (src/detail.rs) are pushed onto this.
+    Adw.NavigationView nav {
+      Adw.NavigationPage {
+        title: _("Conflux");
+        tag: "main";
+
+        child: Adw.ToolbarView {
+          [top]
+          Adw.HeaderBar header {
+            [start]
+            Adw.ToggleGroup scope {
+              tooltip-text: _("Configuration and daemons of your user or of the whole system");
+
+              Adw.Toggle {
+                name: "user";
+                label: _("User");
+              }
+
+              Adw.Toggle {
+                name: "system";
+                label: _("System");
+              }
+            }
+
+            title-widget: Adw.ViewSwitcher {
+              stack: views;
+              policy: wide;
+            };
+
+            [end]
+            Gtk.MenuButton {
+              icon-name: "open-menu-symbolic";
+              menu-model: main_menu;
+              primary: true;
+              tooltip-text: _("Main Menu");
+            }
+          }
+
+          // A problem with the shown scope's config, set in src/window.rs.
+          [top]
+          Adw.Banner banner {}
+
+          // Each page holds one view per scope (src/scope.rs), switched by `scope`.
+          content: Adw.ViewStack views {
+            Adw.ViewStackPage {
+              name: "syncs";
+              title: _("Syncs");
+              icon-name: "folder-symbolic";
+
+              child: Gtk.Stack syncs_stack {
+                transition-type: crossfade;
+              };
+            }
+
+            Adw.ViewStackPage {
+              name: "remotes";
+              title: _("Remotes");
+              icon-name: "network-server-symbolic";
+
+              child: Gtk.Stack remotes_stack {
+                transition-type: crossfade;
+              };
+            }
+          };
+
+          [bottom]
+          Adw.ViewSwitcherBar switcher_bar {
+            stack: views;
+          }
+        };
+      }
+    }
+  };
+}
+
+menu main_menu {
+  section {
+    item {
+      label: _("_Refresh");
+      action: "win.refresh";
+    }
+
+    item {
+      label: _("_Open Config File");
+      action: "win.open-config";
+    }
+  }
+
+  section {
+    item {
+      label: _("_About Conflux");
+      action: "app.about";
+    }
+  }
+}

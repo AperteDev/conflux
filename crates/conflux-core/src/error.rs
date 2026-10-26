@@ -23,6 +23,10 @@ pub enum Error {
     #[error("invalid config: {0}")]
     Validation(String),
 
+    /// An edit to the config file could not be made (see `config_edit`).
+    #[error("cannot edit config: {0}")]
+    ConfigEdit(String),
+
     /// A required base directory could not be determined.
     #[error("could not determine {0} directory")]
     MissingDir(&'static str),

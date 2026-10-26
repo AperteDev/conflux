@@ -1,36 +1,20 @@
-//! Synchronous IPC client used by the CLI control subcommands.
+//! Terminal rendering of daemon responses for the CLI control subcommands.
 //!
-//! The CLI stays tokio-free: it opens the Unix socket with `std`, writes one
-//! JSON request line, and reads one JSON response line.
+//! The request itself goes through [`conflux_core::ipc::client`].
 
-use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::UnixStream;
 use std::path::Path;
 
-use anyhow::{anyhow, Context};
-use conflux_core::engine::{PlanOp, Winner};
-use conflux_core::ipc::{Request, Response};
+use anyhow::Context;
+use conflux_core::ipc::{client, Request, Response};
 
-/// Send a request to the daemon and return its response.
+/// Send a request to the daemon, waiting as long as it takes.
 pub fn send(socket: &Path, request: &Request) -> anyhow::Result<Response> {
-    let stream = UnixStream::connect(socket).with_context(|| {
+    client::send(socket, request, None).with_context(|| {
         format!(
-            "could not connect to the daemon at {} (is it running?)",
+            "could not talk to the daemon at {} (is it running?)",
             socket.display()
         )
-    })?;
-
-    let mut line = serde_json::to_string(request)?;
-    line.push('\n');
-    (&stream).write_all(line.as_bytes())?;
-
-    let mut reader = BufReader::new(&stream);
-    let mut response = String::new();
-    reader.read_line(&mut response)?;
-    if response.trim().is_empty() {
-        return Err(anyhow!("daemon closed the connection without responding"));
-    }
-    Ok(serde_json::from_str(response.trim())?)
+    })
 }
 
 /// Render a [`Response`] for the terminal. Returns whether the command succeeded.
@@ -91,13 +75,20 @@ pub fn print_response(response: &Response) -> bool {
                 for change in changes {
                     println!(
                         "  {} {:<38} {}",
-                        op_symbol(&change.op),
-                        op_label(&change.op),
+                        change.op.symbol(),
+                        change.op.describe(),
                         change.path
                     );
                 }
             }
             ok
+        }
+        Response::Info(info) => {
+            println!(
+                "conflux {} (pid {}), profile {}, config {}",
+                info.version, info.pid, info.profile, info.config
+            );
+            true
         }
         Response::Reloaded { ok, message } => {
             println!("{message}");
@@ -107,63 +98,5 @@ pub fn print_response(response: &Response) -> bool {
             eprintln!("error: {err}");
             false
         }
-    }
-}
-
-/// A one-character direction marker for a planned op: `↑` uploads, `↓` downloads,
-/// `✗` deletes, `!` conflicts, `·` skips.
-fn op_symbol(op: &PlanOp) -> char {
-    match op {
-        PlanOp::Push { .. } | PlanOp::PushPreserveRemote | PlanOp::CreateRemoteDir => '↑',
-        PlanOp::Pull { .. } | PlanOp::PullPreserveLocal | PlanOp::CreateLocalDir => '↓',
-        PlanOp::DeleteLocal
-        | PlanOp::DeleteRemote
-        | PlanOp::DeleteLocalDir
-        | PlanOp::DeleteRemoteDir => '✗',
-        PlanOp::Conflict { .. } => '!',
-        PlanOp::OversizeSkip { .. } => '·',
-    }
-}
-
-/// A short human description of a planned op.
-fn op_label(op: &PlanOp) -> String {
-    match op {
-        PlanOp::Push { update: false } => "upload (new)".into(),
-        PlanOp::Push { update: true } => "upload".into(),
-        PlanOp::Pull { update: false } => "download (new)".into(),
-        PlanOp::Pull { update: true } => "download".into(),
-        PlanOp::DeleteLocal => "delete local".into(),
-        PlanOp::DeleteRemote => "delete remote".into(),
-        PlanOp::Conflict { winner } => format!("conflict (keep {})", winner_side(*winner)),
-        PlanOp::PullPreserveLocal => "download (local kept as conflict copy)".into(),
-        PlanOp::PushPreserveRemote => "upload (remote kept as conflict copy)".into(),
-        PlanOp::OversizeSkip { size } => format!("skip ({} over max_file_size)", human_size(*size)),
-        PlanOp::CreateLocalDir => "create local dir".into(),
-        PlanOp::CreateRemoteDir => "create remote dir".into(),
-        PlanOp::DeleteLocalDir => "delete local dir".into(),
-        PlanOp::DeleteRemoteDir => "delete remote dir".into(),
-    }
-}
-
-fn winner_side(winner: Winner) -> &'static str {
-    match winner {
-        Winner::Local => "local",
-        Winner::Remote => "remote",
-    }
-}
-
-/// Format a byte count with a binary unit, e.g. `1.5MB`.
-fn human_size(bytes: u64) -> String {
-    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
-    let mut size = bytes as f64;
-    let mut unit = 0;
-    while size >= 1024.0 && unit < UNITS.len() - 1 {
-        size /= 1024.0;
-        unit += 1;
-    }
-    if unit == 0 {
-        format!("{bytes}B")
-    } else {
-        format!("{size:.1}{}", UNITS[unit])
     }
 }
