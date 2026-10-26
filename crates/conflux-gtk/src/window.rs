@@ -126,6 +126,12 @@ pub fn open(app: &adw::Application) {
         glib::ControlFlow::Continue
     });
 
+    // In the Flatpak sandbox the system's config and daemons are out of reach:
+    // changing them needs the helper run as root.
+    if model::sandboxed() {
+        win.scope_toggle.set_visible(false);
+    }
+
     win.scope_changed();
     window.present();
 }

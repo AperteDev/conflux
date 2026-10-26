@@ -12,8 +12,12 @@ use conflux_core::helper::{HelperRequest, HelperResponse};
 use futures_channel::oneshot;
 use gtk::{gio, glib, prelude::*};
 
-/// Where packages install the helper; the polkit policy names this path.
-const INSTALLED: &str = "/usr/lib/conflux/conflux-helper";
+/// Where the helper is installed: the polkit policy names this path. The
+/// Makefile builds the app with its own (`CONFLUX_HELPER_PATH`).
+const INSTALLED: &str = match option_env!("CONFLUX_HELPER_PATH") {
+    Some(path) => path,
+    None => "/usr/lib/conflux/conflux-helper",
+};
 
 type Reply = oneshot::Sender<Result<HelperResponse, String>>;
 

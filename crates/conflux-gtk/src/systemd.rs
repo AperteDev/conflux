@@ -85,7 +85,7 @@ pub async fn load(scope: Scope, names: &[String]) -> Result<Systemd, glib::Error
     Ok(Systemd {
         units,
         template: file_state(&bus, "conflux@.service").await.is_some(),
-        linger: scope == Scope::User && lingering(),
+        linger: scope == Scope::User && lingering().await.unwrap_or(false),
     })
 }
 
@@ -145,11 +145,42 @@ pub async fn set_enabled(scope: Scope, unit: &str, enabled: bool) -> Result<(), 
 }
 
 /// Whether the user lingers: logind keeps their manager, and so their daemons,
-/// running without a session.
-fn lingering() -> bool {
-    std::path::Path::new("/var/lib/systemd/linger")
-        .join(glib::user_name())
-        .exists()
+/// running without a session. Asked of logind, which a sandbox can reach too.
+async fn lingering() -> Result<bool, glib::Error> {
+    let bus = gio::bus_get_future(gio::BusType::System).await?;
+    // SAFETY: `getuid` takes no arguments and cannot fail.
+    let uid = unsafe { libc::getuid() };
+    let user = bus
+        .call_future(
+            Some("org.freedesktop.login1"),
+            "/org/freedesktop/login1",
+            "org.freedesktop.login1.Manager",
+            "GetUser",
+            Some(&(uid,).to_variant()),
+            Some(glib::VariantTy::new("(o)").expect("valid D-Bus signature")),
+            gio::DBusCallFlags::NONE,
+            TIMEOUT_MS,
+        )
+        .await?;
+    let path = user.child_value(0);
+    let path = path.str().unwrap_or_default();
+    let linger = bus
+        .call_future(
+            Some("org.freedesktop.login1"),
+            path,
+            "org.freedesktop.DBus.Properties",
+            "Get",
+            Some(&("org.freedesktop.login1.User", "Linger").to_variant()),
+            Some(glib::VariantTy::new("(v)").expect("valid D-Bus signature")),
+            gio::DBusCallFlags::NONE,
+            TIMEOUT_MS,
+        )
+        .await?;
+    Ok(linger
+        .child_value(0)
+        .as_variant()
+        .and_then(|v| v.get::<bool>())
+        .unwrap_or(false))
 }
 
 /// Turn lingering on or off for the user. logind allows it for oneself by

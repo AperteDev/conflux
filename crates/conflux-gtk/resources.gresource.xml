@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The app's icon, for About and the window when it is not installed (a build
+     run); GtkApplication looks in <resource base path>/icons after the theme. -->
+<gresources>
+  <gresource prefix="/dev/aperte/Conflux/icons/scalable/apps">
+    <file alias="dev.aperte.Conflux.svg">../../data/icons/hicolor/scalable/apps/dev.aperte.Conflux.svg</file>
+  </gresource>
+  <gresource prefix="/dev/aperte/Conflux/icons/symbolic/apps">
+    <file alias="dev.aperte.Conflux-symbolic.svg">../../data/icons/hicolor/symbolic/apps/dev.aperte.Conflux-symbolic.svg</file>
+  </gresource>
+</gresources>

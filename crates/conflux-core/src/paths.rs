@@ -42,6 +42,20 @@ pub struct Paths {
 /// The profile whose instance uses the un-suffixed base paths.
 pub const DEFAULT_PROFILE: &str = "default";
 
+/// Where a user daemon of `profile` from before 1.2 listens: right in
+/// `$XDG_RUNTIME_DIR`, not in its `conflux/` subdirectory. Clients try it when
+/// nothing listens on the current path, so they reach a daemon started before an
+/// update until it restarts.
+pub fn legacy_user_socket(profile: Option<&str>) -> Option<PathBuf> {
+    let dir = directories::BaseDirs::new()?.runtime_dir()?.to_path_buf();
+    Some(
+        match profile.filter(|p| !p.is_empty() && *p != DEFAULT_PROFILE) {
+            Some(profile) => dir.join(format!("conflux-{profile}.sock")),
+            None => dir.join("conflux.sock"),
+        },
+    )
+}
+
 /// The systemd unit running `profile`'s daemon: `conflux.service` for the
 /// default profile, `conflux@<profile>.service` for the others.
 pub fn unit_name(profile: &str) -> String {
@@ -104,9 +118,11 @@ impl Paths {
                     .state_dir()
                     .ok_or(Error::MissingDir("state"))?
                     .join("conflux");
+                // A directory of its own, which a sandbox (the Flatpak app) can be
+                // given without the rest of the runtime dir.
                 let socket = base
                     .runtime_dir()
-                    .map(|d| d.join("conflux.sock"))
+                    .map(|d| d.join("conflux").join("conflux.sock"))
                     .unwrap_or_else(|| state.join("conflux.sock"));
                 Paths {
                     config,

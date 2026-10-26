@@ -1,12 +1,29 @@
-# conflux
+<p align="center">
+  <img src="data/icons/hicolor/scalable/apps/dev.aperte.Conflux.svg" width="128" alt="Conflux icon">
+</p>
 
-A background sync daemon for Linux. It keeps local directories in step with a
-**WebDAV** server (Nextcloud & friends), a **Git** repository, or another
-**directory** on disk — or keeps a **git clone you already have** up to date by
-committing, fetching, rebasing and pushing it for you. You choose when each group
-syncs and how much of the tree it owns, from a read-only pull of tracked dotfiles
-to a full 1:1 mirror. One `conflux` binary is both the daemon and the CLI that
-controls it.
+<h1 align="center">conflux</h1>
+
+<p align="center">A background sync daemon for Linux, with a GNOME app to set it up.</p>
+
+<p align="center">
+  <a href="https://github.com/SelfRef/conflux/actions/workflows/ci.yml"><img src="https://github.com/SelfRef/conflux/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+</p>
+
+conflux keeps local directories in step with a **WebDAV** server (Nextcloud and
+friends), a **Git** repository, or another **directory** on disk, or keeps a **git
+clone you already have** up to date by committing, fetching, rebasing and pushing
+it for you. You choose when each group syncs and how much of the tree it owns,
+from a read-only pull of tracked dotfiles to a full 1:1 mirror. One `conflux`
+binary is both the daemon and the CLI that controls it; **Conflux**, the optional
+GNOME app, shows and edits the same setup.
+
+conflux is developed in my free time. If it keeps your files in order, you can
+support its development:
+
+[![Support me on Ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/N5E229GJPZ)
+[![Sponsor on GitHub](https://img.shields.io/badge/Sponsor-EA4AAA?style=for-the-badge&logo=githubsponsors&logoColor=white)](https://github.com/sponsors/SelfRef)
+[![Donate using Liberapay](https://liberapay.com/assets/widgets/donate.svg)](https://liberapay.com/SelfRef/donate)
 
 ## Features
 
@@ -30,30 +47,48 @@ controls it.
 
 ## Install
 
-### Arch Linux
+conflux comes as two packages: **`conflux`**, the daemon and CLI, and
+**`conflux-gtk`**, the optional app (it needs `conflux` and libadwaita 1.7 or
+newer; its prebuilt packages, GNOME 49 or newer).
 
-Three AUR packages — pick one:
-
-| Package | Source |
-| --- | --- |
-| `conflux` | stable release, built from source |
-| `conflux-git` | latest `master`, built from source |
-| `conflux-bin` | stable release, prebuilt binary from GitHub Releases |
+**Arch Linux and derivatives:** install from the
+[AUR](https://aur.archlinux.org/packages?K=conflux) with an AUR helper:
 
 ```sh
-yay -S conflux        # or conflux-git / conflux-bin
+yay -S conflux conflux-gtk
 ```
 
-Without an AUR helper, clone `https://aur.archlinux.org/conflux.git` and run
-`makepkg -si`. (The `conflux-git` `PKGBUILD` also lives in this repo under
-[`package/arch/`](package/arch/).)
+These build the latest release from source; `conflux-bin` and `conflux-gtk-bin`
+install the prebuilt release instead, and `conflux-git` and `conflux-gtk-git`
+build the latest commit.
+
+**Other distributions:** download the packages from the
+[latest release](https://github.com/SelfRef/conflux/releases/latest):
+
+```sh
+# Ubuntu 26.04 and newer (conflux also for arm64)
+sudo apt install ./conflux_<version>_amd64.deb ./conflux-gtk_<version>_amd64.deb
+
+# Any distribution: the daemon and CLI (x86_64 or aarch64), and the app (x86_64),
+# as files to unpack into /
+sudo tar -xzf conflux-v<version>-x86_64-linux.tar.gz --strip-components=1 -C /
+sudo tar -xzf conflux-gtk-<version>-x86_64.tar.gz -C /
+sudo systemd-sysusers conflux.conf   # the system daemon's user
+
+# Flatpak: the app alone, for your own syncs and daemons (the daemon still comes
+# from the conflux package or the tarball)
+flatpak install --user dev.aperte.Conflux.flatpak
+```
+
+Fedora RPMs are built from [`packaging/rpm/conflux.spec`](packaging/rpm/conflux.spec)
+(see [Building packages](#building-packages)).
 
 ### From source
 
-`./install.sh install` builds and installs into your home directory: the binary in
-`~/.local/bin`, `config.example.toml` as your starter config in
-`~/.config/conflux/`, and systemd **user** units. Add `--no-build` to reuse an
-existing `target/release/conflux`.
+`./install.sh install` builds and installs the daemon and CLI into your home
+directory: the binary in `~/.local/bin`, `config.example.toml` as your starter
+config in `~/.config/conflux/`, and systemd **user** units. Add `--no-build` to
+reuse an existing `target/release/conflux`.
 
 Add `--system` (as root) to install system-wide instead — binary in
 `/usr/local/bin`, config in `/etc/conflux/`, systemd **system** units, running as a
@@ -71,7 +106,33 @@ state, and system user:
 ./install.sh uninstall [--system] [--purge]
 ```
 
+The app installs with `make`, after the daemon. It needs Rust 1.92 or newer, GTK
+4, libadwaita 1.7 or newer, `blueprint-compiler` and GLib's
+`glib-compile-resources`:
+
+```sh
+make build-gtk PREFIX=/usr/local && sudo make install-gtk PREFIX=/usr/local
+```
+
 Then [enable the service](#as-a-service-systemd).
+
+### Building packages
+
+The root [`Makefile`](Makefile) installs each package's files into a tree
+(`install-cli`, `install-gtk`, `install-flatpak`), and every package is made from
+it: [`scripts/deb.sh`](scripts/deb.sh) makes the `.deb` packages,
+[`packaging/flatpak/`](packaging/flatpak/) holds the Flatpak manifest, and
+[`packaging/rpm/conflux.spec`](packaging/rpm/conflux.spec) builds `conflux` and
+`conflux-gtk` as RPMs; COPR builds them with `.copr/Makefile`, which also works
+locally:
+
+```sh
+make -f .copr/Makefile srpm outdir=$PWD/target/rpm
+```
+
+Every push is checked and packaged by [CI](.github/workflows/ci.yml); releases are
+made by the manual [Release](.github/workflows/release.yml) workflow and listed in
+the [changelog](docs/CHANGELOG.md).
 
 ## Configure
 
@@ -322,7 +383,7 @@ configure (e.g. `password_command = 'printf %s "$CONFLUX_PASSWORD"'`).
 | `CONFLUX_LOG` | Tracing filter: `debug`, `trace`, or a directive like `info,conflux_core=debug`. Overrides `[daemon] log_level`. |
 | `XDG_CONFIG_HOME` | User-mode config dir (default `~/.config`). |
 | `XDG_STATE_HOME` | User-mode state dir, holding the index and git clones (default `~/.local/state`). |
-| `XDG_RUNTIME_DIR` | Where the control socket lives; falls back to the state dir. |
+| `XDG_RUNTIME_DIR` | The control socket goes in its `conflux/` directory; without it, in the state dir. |
 
 ## Run
 
@@ -382,10 +443,11 @@ new group's direction and filters, bring it up in a throwaway setup first: point
 `--config` at a temp file whose group uses a scratch directory or a `filesystem`
 remote, run `conflux daemon` in the foreground, edit files, and watch `-n`.
 
-## GTK app (preview)
+## The app
 
-`conflux-gtk` is an optional GNOME (libadwaita) app for the same config and
-daemons; the config file stays the source of truth, and nothing needs the app.
+**Conflux** (`conflux-gtk`) is an optional GNOME (libadwaita) app for the same
+config and daemons; the config file stays the source of truth, and nothing needs
+the app.
 It shows the syncs, remotes and daemons of your user and of the system, with each
 sync's live status and where each setting comes from, and it can run a sync or a
 dry run.
@@ -413,12 +475,9 @@ from source runs the helper next to the app; packages install it as
 `/usr/lib/conflux/conflux-helper` with the polkit policy in
 `data/dev.aperte.conflux.policy`.
 
-It is not packaged yet. To try it, install GTK 4, libadwaita 1.7 or newer and
-`blueprint-compiler`, then, with Rust 1.92 or newer:
-
-```sh
-cargo run --release -p conflux-gtk
-```
+The Flatpak shows your own config and daemons only: the sandbox cannot run the
+helper the system's need, nor read the journal, so View Log says which
+`journalctl` command shows it.
 
 ## Roadmap
 

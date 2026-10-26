@@ -7,9 +7,18 @@ use std::path::Path;
 use anyhow::Context;
 use conflux_core::ipc::{client, Request, Response};
 
-/// Send a request to the daemon, waiting as long as it takes.
-pub fn send(socket: &Path, request: &Request) -> anyhow::Result<Response> {
-    client::send(socket, request, None).with_context(|| {
+/// Send a request to the daemon, waiting as long as it takes. When nothing
+/// listens on `socket`, `legacy` (where a daemon from before the socket moved
+/// listens) is tried too.
+pub fn send(socket: &Path, legacy: Option<&Path>, request: &Request) -> anyhow::Result<Response> {
+    let result = match client::send(socket, request, None) {
+        Err(e) if client::is_not_running(&e) => match legacy {
+            Some(old) => client::send(old, request, None).map_err(|_| e),
+            None => Err(e),
+        },
+        other => other,
+    };
+    result.with_context(|| {
         format!(
             "could not talk to the daemon at {} (is it running?)",
             socket.display()

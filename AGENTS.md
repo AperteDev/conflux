@@ -17,23 +17,36 @@ Update these in the same commit as the change that affects them:
 ## Releases
 
 - Releases are cut by the manual Release workflow (`.github/workflows/release.yml`, run with the
-  version, e.g. `gh workflow run release.yml -f version=1.1.0`). `scripts/release.py` sets the
-  version in `Cargo.toml` and `Cargo.lock` and moves the `[Unreleased]` changes and link under
-  it. CI then checks and builds the packages with that version; if that passes, the workflow
-  commits `chore(release): X`, tags `vX`, and publishes the GitHub release with the changelog
-  section as notes, the tarballs and `SHA256SUMS`. Don't bump versions or edit the release
-  sections by hand.
-- `package/arch/PKGBUILD` is the `conflux-git` package; its `pkgver` comes from `git describe`,
-  so it needs no version bump. The tarball name and layout
-  (`conflux-vX-<arch>-linux.tar.gz`, one top-level directory with `usr/` and `etc/`) are used by
-  the `conflux-bin` AUR package: keep them stable.
+  version, e.g. `gh workflow run release.yml -f version=1.2.0`). `scripts/release.py` sets the
+  version in `Cargo.toml`, `Cargo.lock` and the RPM spec (with a changelog entry), moves the
+  `[Unreleased]` changes and link under it, and adds the release with those notes to the
+  app's metainfo. CI then checks and builds the packages with that version; if that passes,
+  the workflow commits `chore(release): X`, tags `vX`, and publishes the GitHub release with
+  the changelog section as notes, the packages and `SHA256SUMS`. Don't bump versions or edit
+  the release sections by hand.
+- Two packages, in every format: `conflux` (daemon and CLI) and `conflux-gtk` (the app and its
+  helper). Each is installed into a tree by the root `Makefile` (`install-cli`, `install-gtk`;
+  `install-flatpak` for the app alone), and every package is made from those trees: the
+  tarballs, the `.deb` packages (`scripts/deb.sh`), the RPMs (`packaging/rpm/conflux.spec`,
+  built on COPR from `.copr/Makefile`) and the Flatpak (`packaging/flatpak/`). A new installed
+  file goes into the `Makefile`, the spec's `%files` and, if it needs care, `scripts/deb.sh`.
+- The AUR packages (`conflux`, `conflux-bin`, `conflux-git`, and the app's) live on the AUR,
+  not here. The CLI tarball's name and layout (`conflux-vX-<arch>-linux.tar.gz`, one top-level
+  directory with `usr/` and `etc/`) are what `conflux-bin` uses: keep them stable.
+- The metainfo (`data/dev.aperte.Conflux.metainfo.xml`) must pass `appstreamcli validate`, and
+  the desktop file `desktop-file-validate`; CI checks both.
+- The spec's `License:` lists the licenses of the crates linked into the binaries; check it
+  again when the dependencies change.
 
 ## CI
 
 - `.github/workflows/ci.yml` runs on every push and pull request (and is called by the Release
   workflow): `cargo fmt --check`, clippy with warnings as errors and the tests of the whole
-  workspace (in a Fedora container, for the GTK app's libraries), and the release tarballs for
-  x86_64 and aarch64 (static builds of the CLI with `cross` and vendored OpenSSL).
+  workspace (in a Fedora container, for the GTK app's libraries), and the packages: the CLI
+  tarballs for x86_64 and aarch64 (static builds with `cross` and vendored OpenSSL), the app's
+  tarball (built on Fedora 43, the oldest supported GNOME), the `.deb` packages on Ubuntu
+  26.04 (installed there to check their dependencies), the Flatpak bundle, and the RPMs as
+  COPR builds them.
 - Run the checks before committing:
 
   ```sh

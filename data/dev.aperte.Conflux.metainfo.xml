@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Copyright 2026 SelfRef -->
+<component type="desktop-application">
+  <id>dev.aperte.Conflux</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>Conflux</name>
+  <summary>Keep folders in sync with your cloud, git and disks</summary>
+  <description>
+    <p>
+      Conflux sets up and watches conflux, a sync daemon that keeps local folders in step with a
+      WebDAV server such as Nextcloud, a git repository, or another folder, or keeps a git clone
+      up to date. The configuration stays a plain file you can also edit by hand.
+    </p>
+    <ul>
+      <li>Every sync with its live status: when it last ran, what it changed, what failed</li>
+      <li>Sync now, or preview what a sync would change</li>
+      <li>Edit syncs, remotes and defaults; comments and layout in the file are kept</li>
+      <li>Run a daemon per profile, start it at login, and read its log</li>
+      <li>The system-wide setup too, unlocked with an administrator's password</li>
+    </ul>
+    <p>
+      The conflux daemon is installed separately, from the conflux package.
+    </p>
+  </description>
+  <developer id="dev.aperte">
+    <name translate="no">Aperte</name>
+  </developer>
+  <launchable type="desktop-id">dev.aperte.Conflux.desktop</launchable>
+  <url type="homepage">https://github.com/SelfRef/conflux</url>
+  <url type="bugtracker">https://github.com/SelfRef/conflux/issues</url>
+  <url type="vcs-browser">https://github.com/SelfRef/conflux</url>
+  <url type="donation">https://github.com/sponsors/SelfRef</url>
+  <branding>
+    <color type="primary" scheme_preference="light">#c9e0d1</color>
+    <color type="primary" scheme_preference="dark">#3d3846</color>
+  </branding>
+  <content_rating type="oars-1.1"/>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+    <control>touch</control>
+  </supports>
+  <!-- scripts/release.py adds each release, with its changelog section. -->
+  <releases>
+  </releases>
+</component>

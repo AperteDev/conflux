@@ -545,6 +545,13 @@ pub fn add(view: &Rc<ScopeView>) {
 /// Follow `profile`'s daemon's log in the journal.
 pub fn show_log(view: &Rc<ScopeView>, profile: &str) {
     let unit = unit_name(profile);
+    if crate::model::sandboxed() {
+        // The Flatpak runtime has no journalctl, and the journal is the host's.
+        view.ctx().toast(&format!(
+            "The log is in the journal: journalctl --user -u {unit}"
+        ));
+        return;
+    }
     let mut argv: Vec<&OsStr> = vec![OsStr::new("journalctl")];
     if view.scope == Scope::User {
         argv.push(OsStr::new("--user"));

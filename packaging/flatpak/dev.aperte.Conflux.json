@@ -1,0 +1,40 @@
+{
+  "id": "dev.aperte.Conflux",
+  "runtime": "org.gnome.Platform",
+  "runtime-version": "51",
+  "sdk": "org.gnome.Sdk",
+  "sdk-extensions": ["org.freedesktop.Sdk.Extension.rust-stable"],
+  "command": "conflux-gtk",
+  "finish-args": [
+    "--share=ipc",
+    "--socket=wayland",
+    "--socket=fallback-x11",
+    "--device=dri",
+    "--filesystem=home",
+    "--filesystem=xdg-run/conflux:create",
+    "--talk-name=org.freedesktop.systemd1",
+    "--system-talk-name=org.freedesktop.login1"
+  ],
+  "build-options": {
+    "append-path": "/usr/lib/sdk/rust-stable/bin",
+    "env": { "CARGO_HOME": "/run/build/conflux/cargo" },
+    "build-args": ["--share=network"]
+  },
+  "modules": [
+    {
+      "name": "conflux",
+      "buildsystem": "simple",
+      "build-commands": [
+        "cargo build --release --locked -p conflux-gtk",
+        "make install-flatpak PREFIX=/app"
+      ],
+      "sources": [
+        {
+          "type": "dir",
+          "path": "../..",
+          "skip": ["target", ".git", ".playwright-mcp", ".flatpak-builder", "flatpak_app", "repo"]
+        }
+      ]
+    }
+  ]
+}

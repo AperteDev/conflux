@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Conflux
+Comment=Keep folders in sync with your cloud, git repositories and other disks
+Exec=conflux-gtk
+Icon=dev.aperte.Conflux
+Terminal=false
+Type=Application
+Categories=Utility;FileTools;
+Keywords=sync;synchronize;backup;mirror;nextcloud;webdav;git;dotfiles;
+StartupNotify=true

@@ -1,7 +1,7 @@
 /target
 **/*.rs.bk
 Cargo.lock.orig
-/package/arch/
-!/package/arch/PKGBUILD
 /.playwright-mcp/
 __pycache__/
+# Leftovers of local makepkg builds from when the PKGBUILD lived here.
+/package/

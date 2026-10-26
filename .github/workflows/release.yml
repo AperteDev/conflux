@@ -42,7 +42,8 @@ jobs:
           pattern: conflux-*
           path: dist
           merge-multiple: true
-      # The x86_64 and aarch64 tarballs.
+      # The CLI tarballs (x86_64, aarch64), the app's tarball, the .deb packages and the
+      # Flatpak bundle. Fedora's RPMs are built on COPR from the new tag.
       - name: Checksums
         working-directory: dist
         run: sha256sum * > SHA256SUMS

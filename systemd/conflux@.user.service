@@ -11,8 +11,8 @@
 #   systemctl --user enable --now conflux@desktop
 #
 # Multiple instances can run at once: each profile gets its own state
-# subdirectory and control socket (conflux-<profile>.sock). Target one with,
-# e.g., `conflux --profile desktop status`.
+# subdirectory and control socket ($XDG_RUNTIME_DIR/conflux/conflux-<profile>.sock).
+# Target one with, e.g., `conflux --profile desktop status`.
 #
 # ExecStart uses the packaged path /usr/bin/conflux. install.sh rewrites it to
 # the actual binary location for from-source installs (e.g. ~/.local/bin); edit

@@ -25,10 +25,15 @@ pub const APP_ID: &str = "dev.aperte.Conflux";
 fn main() -> glib::ExitCode {
     // `--gapplication-app-id` gives a test copy its own id, so it runs next to
     // the one in use instead of handing over to it (scripts/gui-shell.sh).
+    gio::resources_register_include!("resources.gresource")
+        .expect("the embedded resources are valid");
     let app = adw::Application::builder()
         .application_id(APP_ID)
         .flags(gio::ApplicationFlags::CAN_OVERRIDE_APP_ID)
+        // Where the embedded icons are, also under a test copy's app id.
+        .resource_base_path("/dev/aperte/Conflux")
         .build();
+    gtk::Window::set_default_icon_name(APP_ID);
     app.connect_activate(|app| match app.active_window() {
         Some(window) => window.present(),
         None => window::open(app),
@@ -52,7 +57,7 @@ fn main() -> glib::ExitCode {
 fn about(app: &adw::Application) {
     let dialog = adw::AboutDialog::builder()
         .application_name("Conflux")
-        .application_icon("emblem-synchronizing-symbolic")
+        .application_icon(APP_ID)
         .developer_name("SelfRef")
         .version(env!("CARGO_PKG_VERSION"))
         .website(env!("CARGO_PKG_REPOSITORY"))
@@ -60,5 +65,15 @@ fn about(app: &adw::Application) {
         .license_type(gtk::License::Gpl30)
         .comments("View the conflux configuration and the daemons running it")
         .build();
+    for (label, url) in [
+        ("Support on Ko-fi", "https://ko-fi.com/N5E229GJPZ"),
+        ("Sponsor on GitHub", "https://github.com/sponsors/SelfRef"),
+        (
+            "Donate on Liberapay",
+            "https://liberapay.com/SelfRef/donate",
+        ),
+    ] {
+        dialog.add_link(label, url);
+    }
     dialog.present(app.active_window().as_ref());
 }

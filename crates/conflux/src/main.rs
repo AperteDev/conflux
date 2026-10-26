@@ -115,6 +115,13 @@ fn run(cli: &Cli, log_reload: &LogReload) -> anyhow::Result<ExitCode> {
         paths.config = path.clone();
     }
 
+    // A user daemon started before its socket moved still listens on the old path.
+    let legacy = match mode {
+        RunMode::User => conflux_core::paths::legacy_user_socket(cli.profile.as_deref()),
+        RunMode::System => None,
+    };
+    let legacy = legacy.as_deref();
+
     match &cli.command {
         Command::Config { action } => run_config(action, &paths).map(|()| ExitCode::SUCCESS),
         Command::Daemon => {
@@ -135,7 +142,7 @@ fn run(cli: &Cli, log_reload: &LogReload) -> anyhow::Result<ExitCode> {
             daemon::run(config, paths, mode == RunMode::System).map(|()| ExitCode::SUCCESS)
         }
         Command::Status => {
-            let response = control::send(&paths.socket, &Request::Status)?;
+            let response = control::send(&paths.socket, legacy, &Request::Status)?;
             Ok(exit_code(control::print_response(&response)))
         }
         Command::Sync { group, dry_run } => {
@@ -148,11 +155,11 @@ fn run(cli: &Cli, log_reload: &LogReload) -> anyhow::Result<ExitCode> {
             } else {
                 Request::Sync(target)
             };
-            let response = control::send(&paths.socket, &request)?;
+            let response = control::send(&paths.socket, legacy, &request)?;
             Ok(exit_code(control::print_response(&response)))
         }
         Command::Reload => {
-            let response = control::send(&paths.socket, &Request::Reload)?;
+            let response = control::send(&paths.socket, legacy, &Request::Reload)?;
             Ok(exit_code(control::print_response(&response)))
         }
     }

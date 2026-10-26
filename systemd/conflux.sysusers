@@ -1,0 +1,3 @@
+# The user the system-wide daemon runs as (conflux.system.service). Installed to
+# /usr/lib/sysusers.d/conflux.conf; systemd-sysusers creates it.
+u conflux - "conflux sync daemon" /var/lib/conflux

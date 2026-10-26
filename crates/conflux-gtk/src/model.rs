@@ -162,6 +162,19 @@ impl Snapshot {
 /// `<dir>` (`config.toml`, `run/`, `state/`), as the helper's test mode does.
 pub fn paths(scope: Scope, profile: Option<&str>) -> Option<Paths> {
     let mut paths = Paths::resolve(scope.mode(), profile).ok()?;
+    if scope == Scope::User && sandboxed() {
+        // The sandbox's XDG dirs are the app's own; the daemon uses the host's.
+        let state = host_dir("HOST_XDG_STATE_HOME", ".local/state").join("conflux");
+        paths.state = match profile.filter(|p| *p != DEFAULT_PROFILE) {
+            Some(p) => state.join(p),
+            None => state,
+        };
+        if std::env::var_os("CONFLUX_CONFIG").is_none() {
+            paths.config = host_dir("HOST_XDG_CONFIG_HOME", ".config")
+                .join("conflux")
+                .join("config.toml");
+        }
+    }
     if scope == Scope::System {
         paths.config = PathBuf::from(SYSTEM_CONFIG);
         if let Some(root) = std::env::var_os("CONFLUX_TEST_SYSTEM_ROOT").map(PathBuf::from) {
@@ -180,6 +193,34 @@ pub fn paths(scope: Scope, profile: Option<&str>) -> Option<Paths> {
     Some(paths)
 }
 
+/// Whether the app runs in a Flatpak sandbox: then it shows the user's own
+/// config and daemons only, as the system's need a helper run as root.
+pub fn sandboxed() -> bool {
+    Path::new("/.flatpak-info").exists()
+}
+
+/// A host XDG base dir from inside the sandbox: Flatpak passes the host's value
+/// as `HOST_XDG_*` when it was set; otherwise the default under the home folder.
+fn host_dir(var: &str, default: &str) -> PathBuf {
+    std::env::var_os(var)
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .unwrap_or_else(|| {
+            PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(default)
+        })
+}
+
+/// The socket of `profile`'s daemon in `scope`, and where a user daemon from
+/// before the socket moved listens, tried when nothing answers on the first.
+fn socket_of(scope: Scope, profile: &str) -> Option<(PathBuf, Option<PathBuf>)> {
+    let socket = paths(scope, Some(profile))?.socket;
+    let legacy = match scope {
+        Scope::User => conflux_core::paths::legacy_user_socket(Some(profile)),
+        Scope::System => None,
+    };
+    Some((socket, legacy))
+}
+
 pub fn load(scope: Scope) -> Snapshot {
     let base = paths(scope, None);
     let mut config_path = base.as_ref().map(|p| p.config.clone()).unwrap_or_default();
@@ -195,12 +236,25 @@ pub fn load(scope: Scope) -> Snapshot {
     if let Some(dir) = &socket_dir {
         profiles.extend(socket_profiles(dir));
     }
+    if let Some(dir) = (scope == Scope::User)
+        .then(|| conflux_core::paths::legacy_user_socket(None))
+        .flatten()
+        .and_then(|s| s.parent().map(Path::to_path_buf))
+    {
+        profiles.extend(socket_profiles(&dir));
+    }
     profiles.remove(DEFAULT_PROFILE);
     let daemons: Vec<Daemon> = std::iter::once(DEFAULT_PROFILE.to_string())
         .chain(profiles)
         .filter_map(|profile| {
-            let socket = paths(scope, Some(&profile))?.socket;
-            let state = query(&socket);
+            let (mut socket, legacy) = socket_of(scope, &profile)?;
+            let mut state = query(&socket);
+            if let (DaemonState::NotRunning, Some(old)) = (&state, legacy) {
+                let old_state = query(&old);
+                if !matches!(old_state, DaemonState::NotRunning) {
+                    (socket, state) = (old, old_state);
+                }
+            }
             Some(Daemon {
                 profile,
                 socket,

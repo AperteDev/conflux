@@ -8,8 +8,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- `conflux-gtk`, a GTK (libadwaita) app, as a preview built from source: the syncs, remotes
-  and daemons of the user and the system, live sync status, where each setting comes from,
+- Conflux (`conflux-gtk`), a GTK (libadwaita) app: the syncs, remotes and daemons of the user
+  and the system, live sync status, where each setting comes from,
   Sync Now and dry runs. It edits the user's config: every setting of a sync, a remote and
   `[daemon]`, adding and deleting syncs and remotes, and starting a config from the example.
   Edits change only the lines they touch, keep comments, are checked the way the daemon
@@ -23,15 +23,29 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   state. It quits, locking the app again, on Lock or when the window closes.
 - Daemons answer an `Info` request (version, profile, config file, process id), and report
   each group's `id` and whether it is syncing right now in their status.
+- Packages for both: `.deb` packages for Ubuntu 26.04 and newer (`conflux` for amd64 and
+  arm64, `conflux-gtk` for amd64), a tarball of the app next to the CLI's, a Flatpak bundle of
+  the app (your own config and daemons only), and an RPM spec for Fedora with `conflux-gtk`
+  as a subpackage, built on COPR. A `Makefile` installs either package's files.
+- The system daemon's `conflux` user comes with the packages, from
+  `/usr/lib/sysusers.d/conflux.conf`.
 
 ### Changed
 
+- A user daemon's control socket moved into a directory of its own,
+  `$XDG_RUNTIME_DIR/conflux/`, which the Flatpak app can be given. The CLI and the app still
+  reach a daemon started before the update on the old path.
 - A system daemon's control socket is open to every local user, who can read its status.
   Syncing, dry runs and reloading still need root, the `conflux` service user, or membership
   in the `conflux` group.
 - Profile names are limited to ASCII letters, digits, `_`, `-` and `.` (1-64 characters, not
   starting with `.` or `-`), as they become unit, socket and directory names.
 - Release assets come with one `SHA256SUMS` file instead of a `.sha256` file per tarball.
+
+### Removed
+
+- The Arch `PKGBUILD` in this repository: the `conflux`, `conflux-bin` and `conflux-git`
+  packages are kept on the AUR.
 
 ## [1.1.0] - 2026-07-31
 

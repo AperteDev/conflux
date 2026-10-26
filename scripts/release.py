@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Prepare a release: set the version in Cargo.toml and Cargo.lock, move the Unreleased changelog
-section under the new version, and print its notes for the GitHub release. The Release workflow
-runs it; CI runs it too when building for a release, so the binaries carry the version.
+"""Prepare a release: set the version in Cargo.toml and Cargo.lock and in the RPM spec (with a
+changelog entry), move the Unreleased changelog section under the new version, add the release
+with its notes to the app's metainfo, and print the notes for the GitHub release. The Release
+workflow runs it; CI runs it too when building for a release, so the packages carry the version.
 
-    scripts/release.py 1.1.0 > notes.md
+    scripts/release.py 1.2.0 > notes.md
 """
 
 import datetime
+import html
 import pathlib
 import re
 import sys
@@ -27,6 +29,65 @@ def edit(path: str, pattern: str, replacement: str) -> None:
     if count == 0:
         fail(f"{path}: nothing matches {pattern!r}")
     file.write_text(new)
+
+
+def inline(text: str) -> str:
+    """Changelog Markdown within a line as AppStream markup: `code` kept, links and bold as their
+    text."""
+    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+    text = re.sub(r"\*\*([^*]+)\*\*", r"\1", text)
+    return re.sub(r"`([^`]+)`", r"<code>\1</code>", html.escape(text, quote=False))
+
+
+def release_xml(version: str, date: str, notes: str, repo: str, indent: str) -> str:
+    """A metainfo <release> with a changelog section's notes, untranslated: each `### Added` and
+    the like a paragraph, its items a list."""
+    lines = [f'<release version="{version}" date="{date}">']
+    lines.append(f'  <url type="details">{repo}/releases/tag/v{version}</url>')
+    lines.append('  <description translate="no">')  # English, as the changelog
+    items: list[str] = []
+
+    def close_list() -> None:
+        if items:
+            lines.append("    <ul>")
+            lines.extend(f"      <li>{inline(i)}</li>" for i in items)
+            lines.append("    </ul>")
+            items.clear()
+
+    for line in notes.splitlines():
+        if line.startswith("### "):
+            close_list()
+            lines.append(f"    <p>{inline(line[4:].strip())}</p>")
+        elif line.startswith("- "):
+            items.append(line[2:].strip())
+        elif line.strip() and items:
+            items[-1] += " " + line.strip()  # an item's next line
+        elif line.strip():
+            close_list()
+            lines.append(f"    <p>{inline(line.strip())}</p>")
+    close_list()
+    lines += ["  </description>", "</release>"]
+    return "\n".join(indent + l for l in lines) + "\n"
+
+
+def set_release(metainfo: str, version: str, date: str, notes: str, repo: str) -> None:
+    """Put the release first in the metainfo's <releases>, or replace it when listed."""
+    file = ROOT / metainfo
+    text = file.read_text()
+    listed = re.compile(
+        rf'^([ \t]*)<release version="{re.escape(version)}"[^>]*?(?:/>|>.*?</release>)\n',
+        re.M | re.S,
+    )
+    if match := listed.search(text):
+        new = release_xml(version, date, notes, repo, match[1])
+        text = text[: match.start()] + new + text[match.end() :]
+    else:
+        match = re.search(r"^([ \t]*)<releases>\n", text, re.M)
+        if not match:
+            fail(f"{metainfo}: no <releases>")
+        new = release_xml(version, date, notes, repo, match[1] + "  ")
+        text = text[: match.end()] + new + text[match.end() :]
+    file.write_text(text)
 
 
 def main() -> None:
@@ -77,6 +138,23 @@ def main() -> None:
             flags=re.M,
         )
     )
+
+    set_release("data/dev.aperte.Conflux.metainfo.xml", version, date, notes, repo)
+
+    # The RPM spec: its version, and a changelog entry by whoever wrote the last one.
+    spec = "packaging/rpm/conflux.spec"
+    edit(spec, r"^(Version:\s+)\S+$", rf"\g<1>{version}")
+    edit(spec, r"^(Release:\s+)\d+", r"\g<1>1")
+    # C locale names (Python leaves LC_TIME alone), as RPM wants them.
+    day = datetime.date.today().strftime("%a %b %d %Y")
+    file = ROOT / spec
+    text = file.read_text()
+    last = re.search(r"^%changelog\n\* \w+ \w+ \d+ \d+ (.+?) - ", text, re.M)
+    if not last:
+        fail(f"{spec}: no %changelog entry to follow")
+    at = last.start() + len("%changelog\n")
+    entry = f"* {day} {last[1]} - {version}-1\n- See CHANGELOG.md\n\n"
+    file.write_text(text[:at] + entry + text[at:])
 
     print(notes)
     print(f"Prepared release {version}", file=sys.stderr)
