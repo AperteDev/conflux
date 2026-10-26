@@ -23,15 +23,14 @@ WELL = (64, 62, 46)
 DEPTH = 2  # height of the gears' front profile
 # GNOME palette
 COLOR = dict(wall="#241f31", floor="#3d3846", symbolic="#222222")
-# Stamps pressed into the gears: (floor, top wall in shadow, bottom wall in light), tinted with
-# green, blue and yellow
+# Stamps pressed into the gears: (floor, top wall in shadow), tinted with green, blue and yellow
 STAMP = dict(
-    sync=("#6f9a7f", "#2f4a3a", "#9cc8ac"),
-    cloud=("#7891ad", "#2f3f55", "#a6bcd6"),
-    folder=("#a89a6c", "#4f4426", "#d2c48f"),
+    sync=("#6f9a7f", "#2f4a3a"),
+    cloud=("#7891ad", "#2f3f55"),
+    folder=("#a89a6c", "#4f4426"),
     folder_front="#bdae7c",
 )
-STAMP_WALL = 1.2  # how much of a wall shows, at the top and at the bottom
+STAMP_WALL = 1.2  # how much of the wall under the top edges shows
 # Gradients: id, (x1, y1, x2, y2) in the box of the shape, stops
 GRADIENTS = [
     ("plate", (0, 0, 0.35, 1), [(0, "#f6f5f4"), (0.45, "#deddda"), (0.55, "#d0cfcc"),
@@ -153,21 +152,17 @@ def gradient(name: str, box: tuple, stops: list) -> str:
     return "".join(out) + "</linearGradient>"
 
 
-def stamp(name: str, d: str, colors: tuple, transform: str = "") -> tuple[list, list]:
+def stamp(name: str, d: str, colors: tuple) -> tuple[list, list]:
     """Defs and layers of the shape d pressed into a surface lit from above: the wall under its
-    top edges in shadow, the one over its bottom edges in light, the floor between them."""
-    floor, shadow, light = colors
+    top edges in shadow, the floor below it."""
+    floor, shadow = colors
     defs = [
-        f'<clipPath id="{name}-up"><path d="{d}" transform="translate(0 {-STAMP_WALL})"/></clipPath>',
         f'<clipPath id="{name}-down"><path d="{d}" transform="translate(0 {STAMP_WALL})"/></clipPath>',
     ]
     layers = [
-        f'<path d="{d}" fill="{light}"/>',
-        f'<g clip-path="url(#{name}-up)"><path d="{d}" fill="{shadow}"/>',
-        f'<path d="{d}" clip-path="url(#{name}-down)" fill="{floor}"/></g>',
+        f'<path d="{d}" fill="{shadow}"/>',
+        f'<path d="{d}" clip-path="url(#{name}-down)" fill="{floor}"/>',
     ]
-    if transform:
-        layers = [f'<g transform="{transform}">', *layers, "</g>"]
     return defs, layers
 
 
@@ -176,10 +171,7 @@ def icon() -> str:
     big, left, right = gears()
     back, front = folder(right["cx"], right["cy"] + 1, 8)
     stamps = [
-        # the lit wall at the bottom partly reads as the gear's face, so the sign would look a
-        # little wider than tall: stretch it a bit and lower it by half of that
-        stamp("sync", sync(0, 0, 15.5, 5), STAMP["sync"],
-              f"translate({num(big['cx'])} {num(big['cy'] + 0.3)}) scale(1 1.025)"),
+        stamp("sync", sync(big["cx"], big["cy"], 15.5, 5), STAMP["sync"]),
         stamp("cloud", cloud(left["cx"] - 1, left["cy"] + 1, 10.5), STAMP["cloud"]),
         stamp("folder", back, STAMP["folder"]),
     ]
