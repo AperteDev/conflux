@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 """Draw the GTK app's icon: three meshed metal gears in a well of a metal plate, the big one with
-a sync sign stamped into it, between a cloud and a folder. Writes the full-color icon on the GNOME 128px template
-grid and its 16px symbolic.
+a sync sign stamped into it, between a cloud and a folder. Writes the full-color icon on the GNOME
+128px template grid, a 512px PNG of it next to it (with rsvg-convert) and its 16px symbolic.
 
     scripts/app_icon.py
 """
 
 import math
 import pathlib
+import subprocess
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 ICONS = ROOT / "data" / "icons" / "hicolor"
 APP_ID = "dev.aperte.Conflux"
+PNG_SIZE = 512
 
 # Big gear on top, two small ones below it at +-THETA from vertical, in a round well of the plate.
 BIG = dict(cx=64, cy=52, n=12, ro=28, rr=22.5)
@@ -229,6 +231,12 @@ def main() -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text)
         print(path.relative_to(ROOT))
+    # a PNG of the full-color icon, for what can't use the SVG
+    svg = ICONS / "scalable" / "apps" / f"{APP_ID}.svg"
+    path = svg.with_suffix(".png")
+    size = str(PNG_SIZE)
+    subprocess.run(["rsvg-convert", "-w", size, "-h", size, "-o", str(path), str(svg)], check=True)
+    print(path.relative_to(ROOT))
 
 
 if __name__ == "__main__":
