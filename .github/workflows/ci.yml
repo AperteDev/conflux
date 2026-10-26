@@ -2,36 +2,82 @@ name: CI
 
 on:
   push:
-    branches: [master]
   pull_request:
+  # The Release workflow builds through this one, with the version it releases.
+  workflow_call:
+    inputs:
+      version:
+        description: Version to build as (scripts/release.py sets it), such as 1.1.0
+        required: false
+        type: string
 
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
+  VERSION: ${{ inputs.version }}
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    name: Check and test
+    runs-on: ubuntu-24.04
     steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --locked
 
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-
-      - name: Formatting
-        run: cargo fmt --all --check
-
-      - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
-
-      - name: Tests
-        run: cargo test --workspace --locked
+  tarball:
+    name: Tarball (${{ matrix.arch }})
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            arch: x86_64
+          - target: aarch64-unknown-linux-gnu
+            arch: aarch64
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set the release version
+        if: env.VERSION != ''
+        run: python3 scripts/release.py "$VERSION" > /dev/null
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      # Static OpenSSL: the cross containers have no target OpenSSL, and the binary then runs on
+      # any glibc distribution.
+      - run: cross build --locked --release --bin conflux --target ${{ matrix.target }} --features vendored-openssl
+      # The name and layout are what the conflux-bin AUR package expects; keep them.
+      - name: Pack the tree
+        env:
+          TARGET: ${{ matrix.target }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          pkgname="conflux-v$version-$ARCH-linux"
+          root="target/dist/$pkgname"
+          install -Dm0755 "target/$TARGET/release/conflux"  "$root/usr/bin/conflux"
+          install -Dm0644 config.example.toml               "$root/etc/conflux/config.toml"
+          install -Dm0644 systemd/conflux.user.service      "$root/usr/lib/systemd/user/conflux.service"
+          install -Dm0644 systemd/conflux@.user.service     "$root/usr/lib/systemd/user/conflux@.service"
+          install -Dm0644 systemd/conflux.system.service    "$root/usr/lib/systemd/system/conflux.service"
+          install -Dm0644 systemd/conflux@.system.service   "$root/usr/lib/systemd/system/conflux@.service"
+          install -Dm0644 LICENSE                            "$root/usr/share/licenses/conflux/LICENSE"
+          tar -czf "target/$pkgname.tar.gz" -C target/dist "$pkgname"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: conflux-tarball-${{ matrix.arch }}
+          path: target/conflux-v*.tar.gz
+          if-no-files-found: error

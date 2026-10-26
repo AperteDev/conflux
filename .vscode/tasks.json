@@ -23,18 +23,20 @@
 			"detail": "cargo run -- daemon (foreground; Ctrl+C to stop)"
 		},
 		{
-			"label": "release: push master → release",
+			"label": "release: run the Release workflow",
 			"type": "shell",
-			"command": "git",
-			"args": [
-				"push",
-				"--force",
-				"origin",
-				"master:release"
-			],
+			"command": "gh",
+			"args": ["workflow", "run", "release.yml", "-f", "version=${input:releaseVersion}"],
 			"problemMatcher": [],
 			"group": "none",
-			"detail": "Force-update the remote 'release' branch to the current master commit (no checkout). Triggers the Release workflow."
+			"detail": "Start the Release workflow on GitHub: it sets the version, moves the Unreleased changelog section, builds, tags and publishes."
+		}
+	],
+	"inputs": [
+		{
+			"id": "releaseVersion",
+			"type": "promptString",
+			"description": "Version to release, such as 1.1.0"
 		}
 	]
 }

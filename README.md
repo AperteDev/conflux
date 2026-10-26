@@ -371,3 +371,9 @@ preview a brand-new group, which the daemon already synced at startup. To vet a
 new group's direction and filters, bring it up in a throwaway setup first: point
 `--config` at a temp file whose group uses a scratch directory or a `filesystem`
 remote, run `conflux daemon` in the foreground, edit files, and watch `-n`.
+
+## Roadmap
+
+Planned work, including an optional GTK (libadwaita) app for managing the user
+and system daemons, is tracked in [`docs/ROADMAP.md`](docs/ROADMAP.md). Changes
+in each release are listed in [`docs/CHANGELOG.md`](docs/CHANGELOG.md).

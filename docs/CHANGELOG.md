@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Release assets come with one `SHA256SUMS` file instead of a `.sha256` file per tarball.
+
 ## [1.1.0] - 2026-07-31
 
 ### Added
@@ -54,8 +60,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A watched `git_repo` group no longer re-triggers itself forever: writes inside
   `.git` (which conflux's own commit produces) no longer count as local activity.
 
-[1.1.0]: https://github.com/SelfRef/conflux/releases/tag/v1.1.0
-
 ## [1.0.0] - 2026-07-11
 
 First public release. A single `conflux` binary runs both the background
@@ -87,4 +91,6 @@ sync daemon and the CLI that controls it.
 - **Packaging** — Arch Linux `PKGBUILD` and a source install script
   (`install.sh`) for user and system installs.
 
+[Unreleased]: https://github.com/SelfRef/conflux/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/SelfRef/conflux/releases/tag/v1.1.0
 [1.0.0]: https://github.com/SelfRef/conflux/releases/tag/v1.0.0
