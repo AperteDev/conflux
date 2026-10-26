@@ -24,9 +24,9 @@ COLOR = dict(wall="#241f31", floor="#3d3846", symbolic="#222222")
 # Stamps pressed into the gears: (floor, top wall in shadow, bottom wall in light), tinted with
 # green, blue and yellow
 STAMP = dict(
-    sync=("#6f9a7f", "#2f4a3a", "#c4e8d0"),
-    cloud=("#7891ad", "#2f3f55", "#c6d9ef"),
-    folder=("#a89a6c", "#4f4426", "#ece0b4"),
+    sync=("#6f9a7f", "#2f4a3a", "#9cc8ac"),
+    cloud=("#7891ad", "#2f3f55", "#a6bcd6"),
+    folder=("#a89a6c", "#4f4426", "#d2c48f"),
     folder_front="#bdae7c",
 )
 STAMP_WALL = 1.2  # how much of a wall shows, at the top and at the bottom
@@ -174,11 +174,11 @@ def icon() -> str:
     big, left, right = gears()
     back, front = folder(right["cx"], right["cy"] + 1, 8)
     stamps = [
-        # the lit wall at the bottom reads as the gear's face, so the sign would look wider than
-        # tall: stretch it by about that wall and lower it by half of it
+        # the lit wall at the bottom partly reads as the gear's face, so the sign would look a
+        # little wider than tall: stretch it a bit and lower it by half of that
         stamp("sync", sync(0, 0, 15.5, 5), STAMP["sync"],
-              f"translate({num(big['cx'])} {num(big['cy'] + 0.6)}) scale(1 1.05)"),
-        stamp("cloud", cloud(left["cx"] - 2.5, left["cy"] + 1, 11), STAMP["cloud"]),
+              f"translate({num(big['cx'])} {num(big['cy'] + 0.3)}) scale(1 1.025)"),
+        stamp("cloud", cloud(left["cx"] - 1, left["cy"] + 1, 10.5), STAMP["cloud"]),
         stamp("folder", back, STAMP["folder"]),
     ]
     c = COLOR
