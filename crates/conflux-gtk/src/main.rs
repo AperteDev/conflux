@@ -2,9 +2,13 @@
 //! it, for the user and the whole system. Optional: the config file stays the
 //! source of truth and everything works without this app.
 
+mod add;
 mod detail;
 mod dryrun;
+mod editor;
+mod form;
 mod model;
+mod prefs;
 mod scope;
 mod systemd;
 mod text;
@@ -33,6 +37,7 @@ fn main() -> glib::ExitCode {
     app.set_accels_for_action("app.quit", &["<Control>q"]);
     app.set_accels_for_action("window.close", &["<Control>w"]);
     app.set_accels_for_action("win.refresh", &["<Control>r", "F5"]);
+    app.set_accels_for_action("win.preferences", &["<Control>comma"]);
 
     app.run()
 }

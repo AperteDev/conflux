@@ -386,9 +386,17 @@ remote, run `conflux daemon` in the foreground, edit files, and watch `-n`.
 
 `conflux-gtk` is an optional GNOME (libadwaita) app for the same config and
 daemons; the config file stays the source of truth, and nothing needs the app.
-This preview only reads: it shows the syncs, remotes and daemons of your user and
-of the system, with each sync's live status and where each setting comes from,
-and it can run a sync or a dry run. Editing comes later (see the roadmap).
+It shows the syncs, remotes and daemons of your user and of the system, with each
+sync's live status and where each setting comes from, and it can run a sync or a
+dry run.
+
+It edits your own config: every setting of a sync, a remote and `[daemon]`
+(Preferences), and it adds and deletes syncs and remotes. An edit changes only the
+lines it touches, so your comments and layout stay; it is checked the way the
+daemon checks the file, so a change the daemon would refuse is not saved; and the
+running daemons reload it at once. Leaving a setting empty, or choosing
+"Inherit", removes it from the file. The system config can only be read in the app
+for now.
 
 It is not packaged yet. To try it, install GTK 4, libadwaita 1.7 or newer and
 `blueprint-compiler`, then, with Rust 1.92 or newer:

@@ -11,7 +11,7 @@ Status markers: `[ ]` planned, `[~]` in progress, `[x]` done.
 - 1.1.0 released: daemon + CLI in one binary, WebDAV / Git / filesystem backends, `git_repo`
   syncs of an existing clone, triggers, scopes, profiles, `sync --dry-run`, SSH key selection,
   systemd units, Arch packages. Details in [`CHANGELOG.md`](CHANGELOG.md).
-- Unreleased: the read-only GTK app preview (steps 1 and 2 below).
+- Unreleased: the GTK app preview, which edits the user's config (steps 1 to 3 below).
 
 ## GTK frontend (`conflux-gtk`)
 
@@ -92,7 +92,9 @@ the system scope.
 - **Remotes page:** rows with a backend icon, id/label and URL; the detail page shows only the
   fields of the backend (auth for webdav and git over HTTPS, SSH key for git over SSH, branch and
   commit_msg_command for git, pull_interval / max_file_size overrides). `remote_fs` shortcuts are
-  listed read-only as inline remotes, with "Convert to remote".
+  listed as other targets, opening their sync; "Convert to remote" is left for later. The kind
+  of an existing sync (remote, `remote_fs`, `git_repo`) is shown, not changed: that means a new
+  sync.
 - **Inherited values:** every optional field offers "Inherit (current value)", e.g.
   `Deletions: Inherit (deny) / Deny / Allow`. Choosing it removes the key from the file.
 - **Preferences** (`AdwPreferencesDialog`): the `[daemon]` table of the current scope
@@ -114,13 +116,22 @@ New module `conflux_core::config_edit`, on `toml_edit` (already used by `toml`):
   stays `"60m"`) survive. New `[[sync]]` / `[[remote]]` tables go at the end.
 - Renaming a remote id updates every `remote = "..."` using it; deleting a remote still in use
   is blocked, listing its syncs.
-- Every write: apply the edit to the text, validate with `Config::from_toml_str` (the daemon's
-  own checks) plus `warnings()`, write atomically (temp file + rename, keeping owner and mode),
-  then `Reload` every running daemon of that scope.
-- Instant apply (GNOME HIG): switches and combo rows save at once, entry rows on their apply
-  button. A failed validation reverts the row and shows a toast.
-- A `gio::FileMonitor` reloads the view on external edits; with an edit dialog open, a banner
-  asks to reload instead.
+- Every write (`conflux-gtk/src/editor.rs`, one at a time per scope): read the file and refuse
+  if it is no longer the text the app last read; apply the edit; validate with
+  `Config::from_toml_str` (the daemon's own checks); write atomically (temp file + rename,
+  keeping owner and mode); then `Reload` every running daemon of that scope. An edit is refused
+  only when it would turn an accepted config into a refused one, so a config that is already
+  refused can be fixed step by step from the app.
+- Instant apply (GNOME HIG): combo rows and lists save at once, entry rows on their apply
+  button or Enter. An empty entry or an "Inherit" choice removes the key. Durations and sizes
+  are checked before writing, with a message saying how to write them; any refused edit
+  reverts its row and shows a toast.
+- A `gio::FileMonitor` makes the app look again at once on any change, besides polling. When
+  the file changes outside the app, open pages show a banner ("this page is out of date") and
+  refuse further edits, since the positions of syncs and remotes may have moved; removing an
+  entry from the app does the same for pages built before.
+- A missing user config can be started from the app: it writes `config.example.toml` (every
+  option, commented out at its default).
 - Tests in core with fixtures: comments survive, inherit removes the key, renames cascade, edits
   to `config.example.toml` give a minimal diff.
 
@@ -189,8 +200,10 @@ data/                   .desktop, metainfo, icons, polkit policy, gresource
 2. [x] **Read-only GUI:** window, header, lists, live status, instance discovery and states,
    Sync now and Dry run (in both scopes; a system daemon refuses them unless the user may act
    on it), read-only detail pages of syncs and remotes showing where each value comes from.
-3. [ ] **Editing (user scope):** editable detail pages, add/delete dialogs, Preferences, file
-   monitor, validation, automatic reload.
+3. [x] **Editing (user scope):** editable detail pages, Add Sync / Add Remote dialogs, Delete,
+   Preferences (`[daemon]`), file monitor, validation, automatic reload, Create config. The
+   System scope shows the same pages locked until step 5. Profiles are edited as a plain list
+   until step 4 makes them a choice of instances.
 4. [ ] **Instance management (user scope):** add and remove, enable switches, profile
    membership, lingering, log viewer.
 5. [ ] **System unlock:** helper and polkit policy, banner and lock binding, privileged writes,

@@ -5,7 +5,7 @@
 //! survives polling.
 
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -13,6 +13,7 @@ use adw::prelude::*;
 use conflux_core::ipc::{client, Request, Response, SyncTarget};
 use gtk::{gio, glib};
 
+use crate::editor::{self, Edit, EditError};
 use crate::model::{self, ConfigState, Daemon, DaemonState, Loaded, Scope, Snapshot};
 use crate::systemd::Unit;
 use crate::window::Ctx;
@@ -28,6 +29,24 @@ pub struct ScopeView {
     syncs: gtk::Stack,
     remotes: gtk::Stack,
     state: RefCell<State>,
+    /// Bumped whenever the syncs or remotes may have moved in the file (it
+    /// changed on disk, or one was removed here): pages built before then refuse
+    /// edits, as their positions may point elsewhere now.
+    generation: Cell<u64>,
+    /// The text this app wrote last, until a look at the file confirms it.
+    pending: RefCell<Option<String>>,
+    /// Edits waiting to be written, one at a time.
+    queue: RefCell<VecDeque<Job>>,
+    editing: Cell<bool>,
+    /// Banners of open pages, shown when the file changes on disk under them.
+    banners: RefCell<Vec<glib::WeakRef<adw::Banner>>>,
+    monitor: RefCell<Option<(PathBuf, gio::FileMonitor)>>,
+}
+
+struct Job {
+    generation: u64,
+    edit: Edit,
+    done: Box<dyn FnOnce(Result<(), String>)>,
 }
 
 #[derive(Default)]
@@ -78,6 +97,12 @@ impl ScopeView {
             syncs: gtk::Stack::new(),
             remotes: gtk::Stack::new(),
             state: RefCell::default(),
+            generation: Cell::new(0),
+            pending: RefCell::default(),
+            queue: RefCell::default(),
+            editing: Cell::new(false),
+            banners: RefCell::default(),
+            monitor: RefCell::default(),
         });
         ui::replace_child(&view.syncs, "status", &ui::loading("Loading"));
         ui::replace_child(&view.remotes, "status", &ui::loading("Loading"));
@@ -106,6 +131,173 @@ impl ScopeView {
         Some(state.snapshot.as_ref()?.config_path.clone())
     }
 
+    pub fn snapshot(&self) -> Option<Rc<Snapshot>> {
+        self.state.borrow().snapshot.clone()
+    }
+
+    pub fn ctx(&self) -> &Rc<Ctx> {
+        &self.ctx
+    }
+
+    /// Whether this app may change the scope's config. The system's needs
+    /// unlocking, which comes later; until then it is shown read-only.
+    pub fn editable(&self) -> bool {
+        self.scope == Scope::User
+    }
+
+    pub fn generation(&self) -> u64 {
+        self.generation.get()
+    }
+
+    /// Pages built before now must not edit by position any more.
+    pub fn bump_generation(&self) {
+        self.generation.set(self.generation.get() + 1);
+    }
+
+    /// Show `banner` when the file changes on disk while its page is open.
+    pub fn watch_page(&self, banner: &adw::Banner) {
+        let mut banners = self.banners.borrow_mut();
+        banners.retain(|b| b.upgrade().is_some());
+        banners.push(banner.downgrade());
+    }
+
+    /// Write `edit` to the config, after the edits queued before it. `done`
+    /// learns whether it was written, or why not. `generation` is the one the
+    /// edit's page was built in.
+    pub fn edit(
+        self: &Rc<Self>,
+        generation: u64,
+        edit: Edit,
+        done: impl FnOnce(Result<(), String>) + 'static,
+    ) {
+        self.queue.borrow_mut().push_back(Job {
+            generation,
+            edit,
+            done: Box::new(done),
+        });
+        self.pump();
+    }
+
+    fn pump(self: &Rc<Self>) {
+        if self.editing.get() {
+            return;
+        }
+        let Some(job) = self.queue.borrow_mut().pop_front() else {
+            return;
+        };
+        let Job {
+            generation,
+            edit,
+            done,
+        } = job;
+        if generation != self.generation.get() {
+            done(Err(EditError::Changed.to_string()));
+            return self.pump();
+        }
+        let target = {
+            let state = self.state.borrow();
+            state.snapshot.as_ref().and_then(|s| match &s.config {
+                ConfigState::Loaded(loaded) => Some((
+                    s.config_path.clone(),
+                    self.pending
+                        .borrow()
+                        .clone()
+                        .unwrap_or_else(|| loaded.text.clone()),
+                    running_sockets(s),
+                )),
+                _ => None,
+            })
+        };
+        let Some((path, base, sockets)) = target else {
+            done(Err("There is no config file to change".to_string()));
+            return self.pump();
+        };
+        self.editing.set(true);
+        let view = self.clone();
+        glib::spawn_future_local(async move {
+            let result = gio::spawn_blocking(move || editor::apply(&path, &base, edit, &sockets))
+                .await
+                .expect("writing the config panicked");
+            view.editing.set(false);
+            match result {
+                Ok(applied) => {
+                    *view.pending.borrow_mut() = Some(applied.text);
+                    for problem in applied.reload_problems {
+                        view.ctx
+                            .toast(&format!("A daemon did not take the change: {problem}"));
+                    }
+                    done(Ok(()));
+                    view.ctx.refresh();
+                }
+                Err(e @ EditError::Changed) => {
+                    done(Err(e.to_string()));
+                    view.ctx.refresh();
+                }
+                Err(e) => done(Err(e.to_string())),
+            }
+            view.pump();
+        });
+    }
+
+    /// Start the user's config from the example.
+    fn create_config(self: &Rc<Self>) {
+        let Some(path) = self.config_path() else {
+            return;
+        };
+        let view = self.clone();
+        glib::spawn_future_local(async move {
+            let result = gio::spawn_blocking(move || editor::create(&path))
+                .await
+                .expect("creating the config panicked");
+            match result {
+                Ok(()) => view.ctx.toast("Created the config file"),
+                Err(e) => view
+                    .ctx
+                    .toast(&format!("Could not create the config file: {e}")),
+            }
+            view.ctx.refresh();
+        });
+    }
+
+    /// Tell whether the file changed on disk by someone else, and follow it.
+    fn note_change(self: &Rc<Self>, old: Option<&str>, new: Option<&str>) {
+        let mut pending = self.pending.borrow_mut();
+        if new.is_some() && new == pending.as_deref() {
+            // Our own edit, now on disk.
+            *pending = None;
+        } else if new == old {
+            // Nothing new, or a look taken before our last edit was written.
+        } else {
+            *pending = None;
+            if old.is_some() {
+                self.bump_generation();
+                for banner in self.banners.borrow().iter().filter_map(|b| b.upgrade()) {
+                    banner.set_revealed(true);
+                }
+            }
+        }
+    }
+
+    /// Look again as soon as the config file changes, not only when polling.
+    fn watch_file(&self, path: &std::path::Path) {
+        let mut monitor = self.monitor.borrow_mut();
+        if monitor.as_ref().is_some_and(|(p, _)| p == path) {
+            return;
+        }
+        *monitor = gio::File::for_path(path)
+            .monitor_file(gio::FileMonitorFlags::WATCH_MOVES, gio::Cancellable::NONE)
+            .ok()
+            .map(|m| {
+                let ctx = Rc::downgrade(&self.ctx);
+                m.connect_changed(move |_, _, _, _| {
+                    if let Some(ctx) = ctx.upgrade() {
+                        ctx.refresh();
+                    }
+                });
+                (path.to_path_buf(), m)
+            });
+    }
+
     /// Show a fresh look at the scope.
     pub fn show(
         self: &Rc<Self>,
@@ -114,7 +306,14 @@ impl ScopeView {
     ) {
         let snapshot = Rc::new(snapshot);
         let key = structure_key(&snapshot);
-        let had_problem = self.problem();
+        let old_text = self
+            .state
+            .borrow()
+            .snapshot
+            .as_ref()
+            .and_then(|s| loaded_text(s));
+        self.note_change(old_text.as_deref(), loaded_text(&snapshot).as_deref());
+        self.watch_file(&snapshot.config_path);
         let rebuild = {
             let mut state = self.state.borrow_mut();
             state.snapshot = Some(snapshot.clone());
@@ -126,9 +325,7 @@ impl ScopeView {
             self.state.borrow_mut().built_from = Some(key);
         }
         self.update();
-        if self.problem() != had_problem {
-            self.ctx.problem_changed();
-        }
+        self.ctx.changed();
     }
 
     fn rebuild(self: &Rc<Self>, snapshot: &Rc<Snapshot>) {
@@ -141,9 +338,9 @@ impl ScopeView {
         let loaded = match &snapshot.config {
             ConfigState::Loaded(loaded) => loaded,
             other => {
-                let page = config_status(self.scope, &snapshot.config_path, other);
+                let page = self.config_status(&snapshot.config_path, other);
                 ui::replace_child(&self.syncs, "status", &page);
-                let page = config_status(self.scope, &snapshot.config_path, other);
+                let page = self.config_status(&snapshot.config_path, other);
                 ui::replace_child(&self.remotes, "status", &page);
                 return;
             }
@@ -194,9 +391,11 @@ impl ScopeView {
     ) -> adw::PreferencesGroup {
         let group = adw::PreferencesGroup::builder().title("Syncs").build();
         if loaded.raw.syncs.is_empty() {
-            group.set_description(Some(
-                "No syncs yet: add a [[sync]] to the config file to sync a folder",
-            ));
+            group.set_description(Some(if self.editable() {
+                "No syncs yet: add one with the + button"
+            } else {
+                "No syncs yet"
+            }));
             return group;
         }
 
@@ -278,7 +477,7 @@ impl ScopeView {
             let snapshot = snapshot.clone();
             row.connect_activated(move |_| {
                 if let Some(view) = weak.upgrade() {
-                    let page = detail::sync_page(&snapshot, index);
+                    let page = detail::sync_page(&view, &snapshot, index);
                     view.ctx.nav.push(&page);
                 }
             });
@@ -310,7 +509,11 @@ impl ScopeView {
         let page = adw::PreferencesPage::new();
         let group = adw::PreferencesGroup::builder().title("Remotes").build();
         if loaded.raw.remotes.is_empty() {
-            group.set_description(Some("No remotes: add a [[remote]] to the config file"));
+            group.set_description(Some(if self.editable() {
+                "No remotes yet: add one with the + button"
+            } else {
+                "No remotes yet"
+            }));
         }
         for (index, remote) in loaded.raw.remotes.iter().enumerate() {
             let title = remote.label.clone().unwrap_or_else(|| remote.id.clone());
@@ -327,7 +530,9 @@ impl ScopeView {
             let snapshot = snapshot.clone();
             row.connect_activated(move |_| {
                 if let Some(view) = weak.upgrade() {
-                    view.ctx.nav.push(&detail::remote_page(&snapshot, index));
+                    view.ctx
+                        .nav
+                        .push(&detail::remote_page(&view, &snapshot, index));
                 }
             });
             group.add(&row);
@@ -358,7 +563,9 @@ impl ScopeView {
             let snapshot = snapshot.clone();
             row.connect_activated(move |_| {
                 if let Some(view) = weak.upgrade() {
-                    view.ctx.nav.push(&detail::sync_page(&snapshot, index));
+                    view.ctx
+                        .nav
+                        .push(&detail::sync_page(&view, &snapshot, index));
                 }
             });
             direct.add(&row);
@@ -562,47 +769,85 @@ fn structure_key(snapshot: &Snapshot) -> String {
     )
 }
 
-/// The page shown instead of the lists when the config cannot be shown.
-fn config_status(scope: Scope, path: &std::path::Path, state: &ConfigState) -> adw::StatusPage {
-    let path = text::path(path);
-    let (icon, title, description) = match state {
-        ConfigState::Missing => (
-            "document-new-symbolic",
-            "No Configuration",
-            match scope {
-                Scope::User => format!(
-                    "Your conflux configuration goes in {path}. The README shows how to start one."
-                ),
-                Scope::System => format!("There is no system-wide configuration at {path}."),
-            },
-        ),
-        ConfigState::Unreadable(e) => (
-            "dialog-password-symbolic",
-            "Can't Read the Configuration",
-            format!("{path}: {e}"),
-        ),
-        ConfigState::Invalid(e) => (
-            "dialog-error-symbolic",
-            "The Configuration Has Errors",
-            format!("{path}: {e}"),
-        ),
-        ConfigState::Loaded(_) => unreachable!("a loaded config is shown as lists"),
-    };
-    let page = adw::StatusPage::builder()
-        .icon_name(icon)
-        .title(title)
-        .description(glib::markup_escape_text(&description))
-        .build();
-    if matches!(state, ConfigState::Invalid(_)) {
-        let button = gtk::Button::builder()
-            .label("Open Config File")
-            .action_name("win.open-config")
-            .halign(gtk::Align::Center)
-            .css_classes(["pill"])
-            .build();
-        page.set_child(Some(&button));
+/// The text of the snapshot's config file, when it could be read.
+fn loaded_text(snapshot: &Snapshot) -> Option<String> {
+    match &snapshot.config {
+        ConfigState::Loaded(loaded) => Some(loaded.text.clone()),
+        _ => None,
     }
-    page
+}
+
+/// The sockets of the snapshot's running daemons.
+fn running_sockets(snapshot: &Snapshot) -> Vec<PathBuf> {
+    snapshot
+        .daemons
+        .iter()
+        .filter(|d| matches!(d.state, DaemonState::Running { .. }))
+        .map(|d| d.socket.clone())
+        .collect()
+}
+
+impl ScopeView {
+    /// The page shown instead of the lists when the config cannot be shown.
+    fn config_status(
+        self: &Rc<Self>,
+        path: &std::path::Path,
+        state: &ConfigState,
+    ) -> adw::StatusPage {
+        let path = text::path(path);
+        let (icon, title, description) = match state {
+            ConfigState::Missing => (
+                "document-new-symbolic",
+                "No Configuration",
+                match self.scope {
+                    Scope::User => format!(
+                        "Your conflux configuration goes in {path}. Start one from the example, \
+                     which lists every option with its default."
+                    ),
+                    Scope::System => format!("There is no system-wide configuration at {path}."),
+                },
+            ),
+            ConfigState::Unreadable(e) => (
+                "dialog-password-symbolic",
+                "Can't Read the Configuration",
+                format!("{path}: {e}"),
+            ),
+            ConfigState::Invalid(e) => (
+                "dialog-error-symbolic",
+                "The Configuration Has Errors",
+                format!("{path}: {e}"),
+            ),
+            ConfigState::Loaded(_) => unreachable!("a loaded config is shown as lists"),
+        };
+        let page = adw::StatusPage::builder()
+            .icon_name(icon)
+            .title(title)
+            .description(glib::markup_escape_text(&description))
+            .build();
+        if matches!(state, ConfigState::Invalid(_)) {
+            let button = gtk::Button::builder()
+                .label("Open Config File")
+                .action_name("win.open-config")
+                .halign(gtk::Align::Center)
+                .css_classes(["pill"])
+                .build();
+            page.set_child(Some(&button));
+        } else if matches!(state, ConfigState::Missing) && self.editable() {
+            let button = gtk::Button::builder()
+                .label("Create Config File")
+                .halign(gtk::Align::Center)
+                .css_classes(["pill", "suggested-action"])
+                .build();
+            let weak = Rc::downgrade(self);
+            button.connect_clicked(move |_| {
+                if let Some(view) = weak.upgrade() {
+                    view.create_config();
+                }
+            });
+            page.set_child(Some(&button));
+        }
+        page
+    }
 }
 
 /// A daemon's state in a few words, and the style class of its dot.

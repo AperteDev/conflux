@@ -110,15 +110,6 @@ pub fn empty_dirs(mode: EmptyDirMode) -> &'static str {
     }
 }
 
-/// A list of globs or names, or `empty` when there are none.
-pub fn list(items: &[String], empty: &str) -> String {
-    if items.is_empty() {
-        empty.to_string()
-    } else {
-        items.join(", ")
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

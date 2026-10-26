@@ -52,5 +52,16 @@ pub enum Error {
     Io(#[from] std::io::Error),
 }
 
+impl Error {
+    /// The message alone, for a UI: a TOML parse error without the excerpt of
+    /// the file it otherwise spans several lines with.
+    pub fn short(&self) -> String {
+        match self {
+            Error::ConfigParse(e) => format!("failed to parse config: {}", e.message()),
+            other => other.to_string(),
+        }
+    }
+}
+
 /// Convenience result alias for the core library.
 pub type Result<T> = std::result::Result<T, Error>;

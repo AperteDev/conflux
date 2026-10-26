@@ -1,7 +1,9 @@
 //! Small helpers for building the UI.
 
 use adw::prelude::*;
-use gtk::glib;
+use gtk::{gio, glib};
+
+use crate::text;
 
 /// Load a Blueprint view compiled by `build.rs`.
 macro_rules! builder {
@@ -49,6 +51,15 @@ pub fn loading(title: &str) -> adw::StatusPage {
     page
 }
 
+/// Put `text` in an entry row without revealing its apply button, as setting
+/// it otherwise counts as an edit waiting to be applied.
+pub fn reset_entry(row: &adw::EntryRow, text: &str) {
+    let apply = row.shows_apply_button();
+    row.set_show_apply_button(false);
+    row.set_text(text);
+    row.set_show_apply_button(apply);
+}
+
 /// Make `child` the visible page `name` of `stack`, replacing any old one.
 pub fn replace_child(stack: &gtk::Stack, name: &str, child: &impl IsA<gtk::Widget>) {
     if let Some(old) = stack.child_by_name(name) {
@@ -56,4 +67,50 @@ pub fn replace_child(stack: &gtk::Stack, name: &str, child: &impl IsA<gtk::Widge
     }
     stack.add_named(child, Some(name));
     stack.set_visible_child_name(name);
+}
+
+/// Add a button to `row` that picks a folder (or a file) and puts its path in
+/// the row, with `~` for the home folder, then calls `picked`. Returns the
+/// button, for rows that need it only sometimes.
+pub fn add_chooser(
+    window: &adw::ApplicationWindow,
+    row: &adw::EntryRow,
+    folder: bool,
+    picked: impl Fn(&adw::EntryRow) + 'static,
+) -> gtk::Button {
+    let button = gtk::Button::builder()
+        .icon_name(if folder {
+            "folder-open-symbolic"
+        } else {
+            "document-open-symbolic"
+        })
+        .tooltip_text(if folder {
+            "Choose a Folder"
+        } else {
+            "Choose a File"
+        })
+        .valign(gtk::Align::Center)
+        .css_classes(["flat"])
+        .build();
+    let target = row.clone();
+    let window = window.clone();
+    let picked = std::rc::Rc::new(picked);
+    button.connect_clicked(move |_| {
+        let target = target.clone();
+        let picked = picked.clone();
+        let done = move |result: Result<gio::File, glib::Error>| {
+            if let Some(path) = result.ok().and_then(|f| f.path()) {
+                target.set_text(&text::path(&path));
+                picked(&target);
+            }
+        };
+        let dialog = gtk::FileDialog::new();
+        if folder {
+            dialog.select_folder(Some(&window), gio::Cancellable::NONE, done);
+        } else {
+            dialog.open(Some(&window), gio::Cancellable::NONE, done);
+        }
+    });
+    row.add_suffix(&button);
+    button
 }

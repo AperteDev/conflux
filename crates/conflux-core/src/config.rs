@@ -823,7 +823,7 @@ fn default_max_file_size() -> u64 {
 /// Parse a byte size: a bare number (bytes) or a number with a unit suffix.
 /// Decimal units (`KB`, `MB`, `GB`, `TB`) are powers of 1000; binary units
 /// (`KiB`, `MiB`, `GiB`, `TiB`) are powers of 1024. Case-insensitive.
-fn parse_byte_size(s: &str) -> std::result::Result<u64, String> {
+pub fn parse_byte_size(s: &str) -> std::result::Result<u64, String> {
     let s = s.trim();
     if s.is_empty() {
         return Err("empty size".to_string());

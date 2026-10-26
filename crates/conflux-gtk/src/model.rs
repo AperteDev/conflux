@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use conflux_core::config::{Config, Sync};
+use conflux_core::config_edit::ConfigDoc;
 use conflux_core::engine::{group_label, SyncSummary};
 use conflux_core::ipc::{client, DaemonInfo, GroupStatus, Request, Response};
 use conflux_core::paths::{validate_profile, Paths, RunMode, DEFAULT_PROFILE, SYSTEM_CONFIG};
@@ -79,6 +80,8 @@ pub enum ConfigState {
 pub struct Loaded {
     /// The file's text, to tell whether it changed since the last look.
     pub text: String,
+    /// The file as written, for reading values the way they are spelled.
+    pub doc: ConfigDoc,
     /// The config as written.
     pub raw: Config,
     /// The config resolved as the daemon does, also when the daemon would
@@ -92,6 +95,7 @@ pub struct Loaded {
 impl Loaded {
     fn parse(text: String) -> Result<Self, String> {
         let raw = Config::parse_raw(&text).map_err(|e| e.to_string())?;
+        let doc = ConfigDoc::parse(&text).map_err(|e| e.to_string())?;
         let error = Config::from_toml_str(&text).err().map(|e| e.to_string());
         let prepared = Config::parse_unvalidated(&text).ok();
         let warnings = match (&error, &prepared) {
@@ -100,6 +104,7 @@ impl Loaded {
         };
         Ok(Loaded {
             text,
+            doc,
             raw,
             prepared,
             error,

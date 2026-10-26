@@ -54,6 +54,13 @@ Adw.ApplicationWindow window {
               primary: true;
               tooltip-text: _("Main Menu");
             }
+
+            [end]
+            Gtk.MenuButton {
+              icon-name: "list-add-symbolic";
+              menu-model: add_menu;
+              tooltip-text: _("Add");
+            }
           }
 
           // A problem with the shown scope's config, set in src/window.rs.
@@ -93,7 +100,26 @@ Adw.ApplicationWindow window {
   };
 }
 
+menu add_menu {
+  item {
+    label: _("Add _Sync…");
+    action: "win.add-sync";
+  }
+
+  item {
+    label: _("Add _Remote…");
+    action: "win.add-remote";
+  }
+}
+
 menu main_menu {
+  section {
+    item {
+      label: _("_Preferences");
+      action: "win.preferences";
+    }
+  }
+
   section {
     item {
       label: _("_Refresh");

@@ -8,9 +8,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- `conflux-gtk`, a GTK (libadwaita) app, as a read-only preview built from source: the
-  syncs, remotes and daemons of the user and the system, live sync status, where each
-  setting comes from, Sync Now and dry runs.
+- `conflux-gtk`, a GTK (libadwaita) app, as a preview built from source: the syncs, remotes
+  and daemons of the user and the system, live sync status, where each setting comes from,
+  Sync Now and dry runs. It edits the user's config: every setting of a sync, a remote and
+  `[daemon]`, adding and deleting syncs and remotes, and starting a config from the example.
+  Edits change only the lines they touch, keep comments, are checked the way the daemon
+  checks them, and are reloaded by the running daemons. The system config is read-only in
+  it for now.
 - Daemons answer an `Info` request (version, profile, config file, process id), and report
   each group's `id` and whether it is syncing right now in their status.
 

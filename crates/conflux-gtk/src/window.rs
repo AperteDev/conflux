@@ -9,8 +9,8 @@ use gtk::{gio, glib};
 
 use crate::model::{self, Scope};
 use crate::scope::ScopeView;
-use crate::systemd;
 use crate::ui::{self, builder};
+use crate::{add, prefs, systemd};
 
 /// How often the shown scope is looked at again while the window is visible.
 const POLL_SECONDS: u32 = 3;
@@ -38,10 +38,10 @@ impl Ctx {
         }
     }
 
-    /// The banner may have to change: the shown scope's problem changed.
-    pub fn problem_changed(&self) {
+    /// A scope was looked at again: the banner and the actions may change.
+    pub fn changed(&self) {
         if let Some(win) = self.win.borrow().upgrade() {
-            win.show_problem();
+            win.show_state();
         }
     }
 }
@@ -133,8 +133,27 @@ impl Window {
     fn scope_changed(&self) {
         let scope = self.scope();
         self.view(scope).present();
-        self.show_problem();
+        self.show_state();
         self.refresh();
+    }
+
+    /// Follow the shown scope: its config's problem in the banner, and what can
+    /// be added or set.
+    fn show_state(&self) {
+        self.show_problem();
+        let view = self.view(self.scope());
+        let can_edit = view.editable()
+            && view
+                .snapshot()
+                .is_some_and(|s| matches!(s.config, model::ConfigState::Loaded(_)));
+        for name in ["add-sync", "add-remote", "preferences"] {
+            if let Some(action) = self.ctx.window.lookup_action(name) {
+                action
+                    .downcast::<gio::SimpleAction>()
+                    .expect("a simple action")
+                    .set_enabled(can_edit || name == "preferences");
+            }
+        }
     }
 
     /// Load the shown scope again, unless a load is still running.
@@ -220,5 +239,20 @@ fn add_actions(win: &Rc<Window>) {
             }
         })
         .build();
-    win.ctx.window.add_action_entries([refresh, open_config]);
+    let entry = |name: &str, run: fn(&Rc<ScopeView>)| {
+        let weak = Rc::downgrade(win);
+        gio::ActionEntry::builder(name)
+            .activate(move |_: &adw::ApplicationWindow, _, _| {
+                if let Some(win) = weak.upgrade() {
+                    run(win.view(win.scope()));
+                }
+            })
+            .build()
+    };
+    let add_sync = entry("add-sync", add::add_sync);
+    let add_remote = entry("add-remote", add::add_remote);
+    let preferences = entry("preferences", prefs::show);
+    win.ctx
+        .window
+        .add_action_entries([refresh, open_config, add_sync, add_remote, preferences]);
 }

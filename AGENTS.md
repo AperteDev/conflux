@@ -50,8 +50,10 @@ Update these in the same commit as the change that affects them:
 - Static views are Blueprint files in `ui/`, compiled by `build.rs` and loaded with
   `ui::builder!`; rows are built in Rust. Text that only depends on the config lives in the
   GTK-free `model.rs` / `text.rs`, with unit tests.
-- The config file stays the source of truth: never write it whole; edits go through
-  `conflux_core::config_edit`.
+- The config file stays the source of truth: never write it whole. GUI edits go through
+  `ScopeView::edit` (one at a time, refused if the file changed since it was read, checked like
+  the daemon checks it, then reloaded by the running daemons), which edits with
+  `conflux_core::config_edit`. Editable rows come from `form.rs`.
 
 ## Testing the GTK app
 
