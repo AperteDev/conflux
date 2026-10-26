@@ -401,8 +401,17 @@ It manages your daemons, one per profile: start and stop them, have them start a
 login, add one for a new profile with the syncs it runs, remove one, keep them
 running after you log out, and read a daemon's log. They are controlled through
 your systemd user manager, so the units must be installed (they are by the
-packages and `install.sh`). The system config and daemons can only be read in the
-app for now.
+packages and `install.sh`).
+
+The system's config and daemons show locked, as in GNOME Settings: anyone can read
+them, and **Unlock** asks for an administrator's password once, then the same
+pages change them. Behind it is `conflux-helper`, run as root through `pkexec`,
+which only writes `/etc/conflux/config.toml` (checked like any edit), starts,
+stops and enables the system daemons, passes them requests, and deletes a
+daemon's state. It quits on **Lock**, when the app closes, or after 5 minutes
+without a request. A build from source runs the helper next to the app; packages
+install it as `/usr/lib/conflux/conflux-helper` with the polkit policy in
+`data/dev.aperte.conflux.policy`.
 
 It is not packaged yet. To try it, install GTK 4, libadwaita 1.7 or newer and
 `blueprint-compiler`, then, with Rust 1.92 or newer:

@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use adw::prelude::*;
 use conflux_core::config_edit::Entry;
-use conflux_core::paths::{validate_profile, Paths, RunMode, DEFAULT_PROFILE};
+use conflux_core::paths::{validate_profile, DEFAULT_PROFILE};
 use gtk::{gio, glib};
 
 use crate::detail::{group, page_with};
@@ -19,6 +19,7 @@ use crate::model::{unit_name, ConfigState, DaemonState, Scope, Snapshot};
 use crate::scope::ScopeView;
 use crate::systemd::{self, Action};
 use crate::{text, ui};
+use conflux_core::helper::{HelperRequest, HelperResponse, UnitAction};
 
 /// Look again now, and once more when systemd has likely carried the job out.
 fn refresh_soon(view: &Rc<ScopeView>) {
@@ -31,31 +32,67 @@ fn refresh_soon(view: &Rc<ScopeView>) {
     });
 }
 
+/// Act on `profile`'s unit: through the user's systemd manager for the user's
+/// daemons, through the helper (as root) for the system's.
+async fn act(view: &ScopeView, profile: &str, action: UnitAction) -> Result<(), String> {
+    let unit = unit_name(profile);
+    let result = match view.scope {
+        Scope::User => {
+            let done = match action {
+                UnitAction::Start => systemd::control(view.scope, &unit, Action::Start).await,
+                UnitAction::Stop => systemd::control(view.scope, &unit, Action::Stop).await,
+                UnitAction::Restart => systemd::control(view.scope, &unit, Action::Restart).await,
+                UnitAction::Enable => systemd::set_enabled(view.scope, &unit, true).await,
+                UnitAction::Disable => systemd::set_enabled(view.scope, &unit, false).await,
+            };
+            done.map_err(|e| e.message().to_string())
+        }
+        Scope::System => match view.helper() {
+            None => Err("unlock to change the system's daemons".to_string()),
+            Some(helper) => {
+                let request = HelperRequest::Unit {
+                    action,
+                    profile: profile.to_string(),
+                };
+                match helper.call(&request).await? {
+                    HelperResponse::Done { .. } => Ok(()),
+                    HelperResponse::Error(e) => Err(e),
+                    _ => Err("unexpected answer from the helper".to_string()),
+                }
+            }
+        },
+    };
+    result.map_err(|e| format!("Could not change {unit}: {e}"))
+}
+
 /// Start, stop or restart `profile`'s daemon.
-pub fn control(view: &Rc<ScopeView>, profile: &str, action: Action) {
-    let (view, unit) = (view.clone(), unit_name(profile));
+pub fn control(view: &Rc<ScopeView>, profile: &str, action: UnitAction) {
+    let (view, profile) = (view.clone(), profile.to_string());
     glib::spawn_future_local(async move {
-        if let Err(e) = systemd::control(view.scope, &unit, action).await {
-            view.ctx()
-                .toast(&format!("Could not change {unit}: {}", e.message()));
+        if let Err(e) = act(&view, &profile, action).await {
+            view.ctx().toast(&e);
         }
         refresh_soon(&view);
     });
 }
 
-/// Make `profile`'s daemon start at login, or not; `failed` runs when it could
-/// not be done.
+/// Make `profile`'s daemon start at login (or boot), or not; `failed` runs when
+/// it could not be done.
 pub fn set_enabled(
     view: &Rc<ScopeView>,
     profile: &str,
     enabled: bool,
     failed: impl FnOnce() + 'static,
 ) {
-    let (view, unit) = (view.clone(), unit_name(profile));
+    let (view, profile) = (view.clone(), profile.to_string());
+    let action = if enabled {
+        UnitAction::Enable
+    } else {
+        UnitAction::Disable
+    };
     glib::spawn_future_local(async move {
-        if let Err(e) = systemd::set_enabled(view.scope, &unit, enabled).await {
-            view.ctx()
-                .toast(&format!("Could not change {unit}: {}", e.message()));
+        if let Err(e) = act(&view, &profile, action).await {
+            view.ctx().toast(&e);
             failed();
         }
         refresh_soon(&view);
@@ -76,11 +113,7 @@ pub fn set_linger(view: &Rc<ScopeView>, enabled: bool, failed: impl FnOnce() + '
 }
 
 fn state_dir(scope: Scope, profile: &str) -> Option<std::path::PathBuf> {
-    let mode = match scope {
-        Scope::User => RunMode::User,
-        Scope::System => RunMode::System,
-    };
-    Paths::resolve(mode, Some(profile)).ok().map(|p| p.state)
+    crate::model::paths(scope, Some(profile)).map(|p| p.state)
 }
 
 /// The page of `profile`'s daemon: what and where it is, its controls, and the
@@ -134,7 +167,7 @@ pub fn page(view: &Rc<ScopeView>, snapshot: &Rc<Snapshot>, profile: &str) -> adw
         about.push(ui::property("Control socket", &daemon.socket.display().to_string()).upcast());
     }
     if let Some(dir) = state_dir(view.scope, profile) {
-        about.push(ui::property("State folder", &text::path(&dir)).upcast());
+        about.push(ui::property("State folder", &text::path(view.scope, &dir)).upcast());
     }
     let about: Vec<&gtk::Widget> = about.iter().collect();
     groups.push(group("Daemon", &about));
@@ -163,9 +196,9 @@ pub fn page(view: &Rc<ScopeView>, snapshot: &Rc<Snapshot>, profile: &str) -> adw
             let (view, profile) = (view.clone(), profile.to_string());
             running.connect_active_notify(move |row| {
                 let action = if row.is_active() {
-                    Action::Start
+                    UnitAction::Start
                 } else {
-                    Action::Stop
+                    UnitAction::Stop
                 };
                 control(&view, &profile, action);
             });
@@ -188,7 +221,7 @@ pub fn page(view: &Rc<ScopeView>, snapshot: &Rc<Snapshot>, profile: &str) -> adw
         let restart = button_row("Restart", "view-refresh-symbolic", editable && active);
         {
             let (view, profile) = (view.clone(), profile.to_string());
-            restart.connect_activated(move |_| control(&view, &profile, Action::Restart));
+            restart.connect_activated(move |_| control(&view, &profile, UnitAction::Restart));
         }
         let log = button_row("View Log", "text-x-generic-symbolic", true);
         {
@@ -231,7 +264,7 @@ pub fn page(view: &Rc<ScopeView>, snapshot: &Rc<Snapshot>, profile: &str) -> adw
             let member = profiles_of(&loaded.doc, index).iter().any(|p| p == profile);
             let row = adw::SwitchRow::builder()
                 .title(text::sync_title(sync, &loaded.label(index)))
-                .subtitle(text::mapping(sync))
+                .subtitle(text::mapping(view.scope, sync))
                 .use_markup(false)
                 .active(member)
                 .sensitive(editable)
@@ -303,7 +336,7 @@ pub fn remove(view: &Rc<ScopeView>, profile: &str) {
         .label(match &state {
             Some(dir) => format!(
                 "Delete what it remembers of past syncs ({})",
-                text::path(dir)
+                text::path(view.scope, dir)
             ),
             None => "Delete what it remembers of past syncs".to_string(),
         })
@@ -330,10 +363,9 @@ pub fn remove(view: &Rc<ScopeView>, profile: &str) {
         }
         let (in_syncs, delete_state) = (in_syncs.is_active(), delete_state.is_active());
         glib::spawn_future_local(async move {
-            let unit = unit_name(&profile);
             // Neither fails the removal: the unit may be stopped or disabled already.
-            let _ = systemd::control(view.scope, &unit, Action::Stop).await;
-            let _ = systemd::set_enabled(view.scope, &unit, false).await;
+            let _ = act(&view, &profile, UnitAction::Stop).await;
+            let _ = act(&view, &profile, UnitAction::Disable).await;
             if in_syncs {
                 let name = profile.clone();
                 let ctx = view.ctx().clone();
@@ -357,12 +389,25 @@ pub fn remove(view: &Rc<ScopeView>, profile: &str) {
                 );
             }
             if let Some(dir) = state.filter(|_| delete_state) {
-                let removed = gio::spawn_blocking(move || match std::fs::remove_dir_all(&dir) {
-                    Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()),
-                    _ => Ok(()),
-                })
-                .await
-                .expect("removing the state folder panicked");
+                let removed = match view.helper() {
+                    // The system daemon's state belongs to root.
+                    Some(helper) => {
+                        let request = HelperRequest::RemoveState {
+                            profile: profile.clone(),
+                        };
+                        match helper.call(&request).await {
+                            Ok(HelperResponse::Done { .. }) => Ok(()),
+                            Ok(HelperResponse::Error(e)) | Err(e) => Err(e),
+                            Ok(_) => Err("unexpected answer from the helper".to_string()),
+                        }
+                    }
+                    None => gio::spawn_blocking(move || match std::fs::remove_dir_all(&dir) {
+                        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()),
+                        _ => Ok(()),
+                    })
+                    .await
+                    .expect("removing the state folder panicked"),
+                };
                 if let Err(e) = removed {
                     view.ctx()
                         .toast(&format!("Could not delete its state: {e}"));
@@ -419,7 +464,7 @@ pub fn add(view: &Rc<ScopeView>) {
     for (index, sync) in loaded.raw.syncs.iter().enumerate() {
         let row = adw::SwitchRow::builder()
             .title(text::sync_title(sync, &loaded.label(index)))
-            .subtitle(text::mapping(sync))
+            .subtitle(text::mapping(view.scope, sync))
             .use_markup(false)
             .build();
         syncs.add(&row);
@@ -479,19 +524,15 @@ pub fn add(view: &Rc<ScopeView>) {
                 }
                 dialog.close();
                 glib::spawn_future_local(async move {
-                    let unit = unit_name(&profile);
-                    let scope = view2.scope;
                     let mut failed = None;
                     if enable {
-                        failed = systemd::set_enabled(scope, &unit, true).await.err();
+                        failed = act(&view2, &profile, UnitAction::Enable).await.err();
                     }
                     if start && failed.is_none() {
-                        failed = systemd::control(scope, &unit, Action::Start).await.err();
+                        failed = act(&view2, &profile, UnitAction::Start).await.err();
                     }
                     match failed {
-                        Some(e) => view2
-                            .ctx()
-                            .toast(&format!("Added the profile, but {unit}: {}", e.message())),
+                        Some(e) => view2.ctx().toast(&format!("Added the profile. {e}")),
                         None => view2.ctx().toast(&format!("Added the {profile} daemon")),
                     }
                     refresh_soon(&view2);

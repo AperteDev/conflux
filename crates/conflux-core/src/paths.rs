@@ -42,6 +42,16 @@ pub struct Paths {
 /// The profile whose instance uses the un-suffixed base paths.
 pub const DEFAULT_PROFILE: &str = "default";
 
+/// The systemd unit running `profile`'s daemon: `conflux.service` for the
+/// default profile, `conflux@<profile>.service` for the others.
+pub fn unit_name(profile: &str) -> String {
+    if profile == DEFAULT_PROFILE {
+        "conflux.service".to_string()
+    } else {
+        format!("conflux@{profile}.service")
+    }
+}
+
 /// The system daemon's config file, before any `$CONFLUX_CONFIG` override.
 pub const SYSTEM_CONFIG: &str = "/etc/conflux/config.toml";
 

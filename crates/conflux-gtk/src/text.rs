@@ -4,7 +4,9 @@ use std::path::Path;
 use std::time::Duration;
 
 use conflux_core::config::{DaemonConfig, Sync};
-use conflux_core::model::{Deletions, EmptyDirMode, RemoteKind, Scope, Trigger};
+use conflux_core::model::{Deletions, EmptyDirMode, RemoteKind, Scope as SyncScope, Trigger};
+
+use crate::model::Scope;
 
 /// `"5s"`, `"1h 30m"`, or `"off"` for zero.
 pub fn duration(d: Duration) -> String {
@@ -15,8 +17,13 @@ pub fn duration(d: Duration) -> String {
     }
 }
 
-/// A path with the home folder shortened to `~`, as people write it.
-pub fn path(path: &Path) -> String {
+/// A path as it reads in `scope`: in the user's, with the home folder shortened
+/// to `~`, as people write it; in the system's, whole, as `~` there would mean
+/// the system daemon's home, not this user's.
+pub fn path(scope: Scope, path: &Path) -> String {
+    if scope == Scope::System {
+        return path.display().to_string();
+    }
     let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
     match home.as_deref().and_then(|h| path.strip_prefix(h).ok()) {
         Some(rest) if rest.as_os_str().is_empty() => "~".to_string(),
@@ -34,14 +41,14 @@ pub fn sync_title(sync: &Sync, label: &str) -> String {
 }
 
 /// Where a sync's files go: `remote:path`, a folder, or a git clone.
-pub fn target(sync: &Sync) -> String {
+pub fn target(scope: Scope, sync: &Sync) -> String {
     if let Some(repo) = &sync.git_repo {
-        return format!("Git clone {}", self::path(repo));
+        return format!("Git clone {}", self::path(scope, repo));
     }
     let path = sync.remote_path.trim_matches('/');
     match (&sync.remote_fs, &sync.remote) {
-        (Some(dir), _) if path.is_empty() => self::path(dir),
-        (Some(dir), _) => format!("{}/{path}", self::path(dir)),
+        (Some(dir), _) if path.is_empty() => self::path(scope, dir),
+        (Some(dir), _) => format!("{}/{path}", self::path(scope, dir)),
         (None, Some(remote)) if path.is_empty() => remote.clone(),
         (None, Some(remote)) => format!("{remote}:{path}"),
         (None, None) => String::new(),
@@ -49,11 +56,11 @@ pub fn target(sync: &Sync) -> String {
 }
 
 /// `local ⇄ target`, or just the clone for a `git_repo` sync.
-pub fn mapping(sync: &Sync) -> String {
+pub fn mapping(scope: Scope, sync: &Sync) -> String {
     if sync.git_repo.is_some() {
-        target(sync)
+        target(scope, sync)
     } else {
-        format!("{} ⇄ {}", path(&sync.local), target(sync))
+        format!("{} ⇄ {}", path(scope, &sync.local), target(scope, sync))
     }
 }
 
@@ -86,12 +93,12 @@ pub fn backend_icon(kind: RemoteKind) -> &'static str {
     }
 }
 
-pub fn scope(scope: Scope) -> &'static str {
+pub fn scope(scope: SyncScope) -> &'static str {
     match scope {
-        Scope::Include => "Only the included paths",
-        Scope::Remote => "Included paths both ways, everything else pulled from the remote",
-        Scope::Local => "Included paths both ways, everything else pushed to the remote",
-        Scope::Mirror => "The whole tree, both ways",
+        SyncScope::Include => "Only the included paths",
+        SyncScope::Remote => "Included paths both ways, everything else pulled from the remote",
+        SyncScope::Local => "Included paths both ways, everything else pushed to the remote",
+        SyncScope::Mirror => "The whole tree, both ways",
     }
 }
 
@@ -125,19 +132,22 @@ mod tests {
     #[test]
     fn mappings_follow_the_kind_of_sync() {
         let s = sync("remote = \"nas\"\nlocal = \"~/Documents\"\nremote_path = \"/docs/\"");
-        assert_eq!(mapping(&s), "~/Documents ⇄ nas:docs");
+        assert_eq!(mapping(Scope::User, &s), "~/Documents ⇄ nas:docs");
         let s = sync("remote_fs = \"/mnt/b\"\nlocal = \"~/a\"");
-        assert_eq!(mapping(&s), "~/a ⇄ /mnt/b");
+        assert_eq!(mapping(Scope::User, &s), "~/a ⇄ /mnt/b");
         let s = sync("git_repo = \"~/notes\"");
-        assert_eq!(mapping(&s), "Git clone ~/notes");
+        assert_eq!(mapping(Scope::User, &s), "Git clone ~/notes");
     }
 
     #[test]
     fn paths_under_home_use_a_tilde() {
         let home = std::env::var("HOME").unwrap();
-        assert_eq!(path(Path::new(&format!("{home}/Documents"))), "~/Documents");
-        assert_eq!(path(Path::new(&home)), "~");
-        assert_eq!(path(Path::new("/mnt/backup")), "/mnt/backup");
+        let docs = format!("{home}/Documents");
+        assert_eq!(path(Scope::User, Path::new(&docs)), "~/Documents");
+        assert_eq!(path(Scope::User, Path::new(&home)), "~");
+        assert_eq!(path(Scope::User, Path::new("/mnt/backup")), "/mnt/backup");
+        // The system daemon's ~ is not this user's.
+        assert_eq!(path(Scope::System, Path::new(&docs)), docs);
     }
 
     #[test]

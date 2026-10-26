@@ -179,7 +179,10 @@ impl Form {
 
         if matches!(kind, Kind::Folder | Kind::File) && self.editable {
             let window = self.view.ctx().window.clone();
-            ui::add_chooser(&window, row, kind == Kind::Folder, move |row| apply(row));
+            let scope = self.view.scope;
+            ui::add_chooser(&window, scope, row, kind == Kind::Folder, move |row| {
+                apply(row)
+            });
         }
     }
 

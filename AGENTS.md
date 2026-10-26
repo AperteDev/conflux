@@ -70,6 +70,14 @@ Update these in the same commit as the change that affects them:
   systemd units: never start, stop or enable `conflux*` units, or toggle lingering, while
   testing (they would run the user's real config, or change what starts at login). Test
   those through profiles that exist only in the scratch config, with their switches off.
+- The system scope's unlock without root or a password prompt (which would appear on the
+  user's real screen): set `CONFLUX_HELPER_COMMAND=$PWD/target/debug/conflux-helper` (no
+  pkexec) and `CONFLUX_TEST_SYSTEM_ROOT=<dir>` (a scratch "system": `config.toml`, `run/`
+  with a scratch daemon's socket, `state/`) when starting `scripts/gui-shell.sh`. The helper
+  honours the test root only when not root, and refuses units there. Never run the real
+  `pkexec` path in tests.
+- `scripts/gui-shell.sh` starts the app as `dev.aperte.Conflux.Test` (`--gapplication-app-id`),
+  so a copy the user has open stays theirs; never kill a `conflux-gtk` without that id.
 - GTK's Broadway backend (`gtk4-broadwayd`, Playwright on `http://127.0.0.1:8087`) aborts as
   soon as the Syncs page shows two daemon rows (`append_node_ops` assertion), and when a
   dialog closes; use it only for quick looks at other pages.

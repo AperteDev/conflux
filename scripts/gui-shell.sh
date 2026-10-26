@@ -8,7 +8,8 @@
 # app stays on the host's bus, so it sees the user's real systemd units: test
 # with a scratch config, and leave the switches of real units alone. With a
 # scratch dir (holding config.toml, run/ and state/, as for a scratch daemon),
-# the app reads that config and those daemons. Ctrl+C stops it all.
+# the app reads that config and those daemons. It runs as dev.aperte.Conflux.Test,
+# so a copy of the app already open stays apart. Ctrl+C stops it all.
 set -eu
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -44,7 +45,7 @@ else
 fi
 "$@" WAYLAND_DISPLAY="$XDG_RUNTIME_DIR/$display" GDK_BACKEND=wayland GTK_A11Y=none \
   DBUS_SESSION_BUS_ADDRESS="$HOST_BUS" "$root/target/debug/conflux-gtk" \
-  > "$work/app.log" 2>&1 &
+  --gapplication-app-id=dev.aperte.Conflux.Test > "$work/app.log" 2>&1 &
 
 # The app maximized, the overview closed, and no hot corner for the pointer to
 # hit on its way in from the top left.

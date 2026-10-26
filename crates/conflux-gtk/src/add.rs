@@ -116,11 +116,11 @@ pub fn add_sync(view: &Rc<ScopeView>) {
     }
     let remote_path = entry("Path on the remote (empty: its root)");
     let folder = entry("Folder to mirror to");
-    ui::add_chooser(&window, &folder, true, |_| {});
+    ui::add_chooser(&window, view.scope, &folder, true, |_| {});
     let local = entry("Local folder");
-    ui::add_chooser(&window, &local, true, |_| {});
+    ui::add_chooser(&window, view.scope, &local, true, |_| {});
     let repo = entry("Git clone");
-    ui::add_chooser(&window, &repo, true, |_| {});
+    ui::add_chooser(&window, view.scope, &repo, true, |_| {});
     let everything = adw::SwitchRow::builder()
         .title("Sync everything")
         .subtitle("Otherwise pick the paths to sync after adding it")
@@ -268,7 +268,7 @@ pub fn add_remote(view: &Rc<ScopeView>) {
     page.add(&auth);
 
     // A folder remote's location is a path, so it gets a chooser too.
-    let pick = ui::add_chooser(&window, &url, true, |_| {});
+    let pick = ui::add_chooser(&window, view.scope, &url, true, |_| {});
     let show_backend = {
         let (url, auth, branch) = (url.clone(), auth.clone(), branch.clone());
         move |b: u32| {

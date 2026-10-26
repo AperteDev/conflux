@@ -51,6 +51,7 @@ pub struct Window {
     closed: Cell<bool>,
     scope_toggle: adw::ToggleGroup,
     banner: adw::Banner,
+    lock_banner: adw::Banner,
     user: Rc<ScopeView>,
     system: Rc<ScopeView>,
 }
@@ -72,6 +73,7 @@ pub fn open(app: &adw::Application) {
         system: ScopeView::new(Scope::System, ctx.clone(), &syncs, &remotes),
         scope_toggle: ui::get(&b, "scope"),
         banner: ui::get(&b, "banner"),
+        lock_banner: ui::get(&b, "lock_banner"),
         closed: Cell::new(false),
         ctx,
     });
@@ -81,6 +83,17 @@ pub fn open(app: &adw::Application) {
     win.scope_toggle.connect_active_name_notify(move |_| {
         if let Some(win) = weak.upgrade() {
             win.scope_changed();
+        }
+    });
+    let weak = Rc::downgrade(&win);
+    win.lock_banner.connect_button_clicked(move |_| {
+        if let Some(win) = weak.upgrade() {
+            let view = win.view(Scope::System);
+            if view.locked() {
+                view.unlock();
+            } else {
+                view.lock();
+            }
         }
     });
     let weak = Rc::downgrade(&win);
@@ -142,6 +155,20 @@ impl Window {
     fn show_state(&self) {
         self.show_problem();
         let view = self.view(self.scope());
+        // Like Settings' Printers: the system's settings are locked until unlocked.
+        if view.scope == Scope::System {
+            if view.locked() {
+                self.lock_banner.set_title("Some settings are locked");
+                self.lock_banner.set_button_label(Some("Unlock…"));
+            } else {
+                self.lock_banner
+                    .set_title("Unlocked: changes apply to the whole system");
+                self.lock_banner.set_button_label(Some("Lock"));
+            }
+            self.lock_banner.set_revealed(true);
+        } else {
+            self.lock_banner.set_revealed(false);
+        }
         let can_edit = view.editable()
             && view
                 .snapshot()

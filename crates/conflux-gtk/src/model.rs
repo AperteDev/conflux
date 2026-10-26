@@ -47,14 +47,7 @@ impl Scope {
     }
 }
 
-/// The systemd unit running `profile`'s daemon.
-pub fn unit_name(profile: &str) -> String {
-    if profile == DEFAULT_PROFILE {
-        "conflux.service".to_string()
-    } else {
-        format!("conflux@{profile}.service")
-    }
-}
+pub use conflux_core::paths::unit_name;
 
 /// One scope's state at one moment.
 #[derive(Debug)]
@@ -161,14 +154,35 @@ impl Snapshot {
 }
 
 /// Read the config and ask every daemon of `scope` for its state.
+/// Where `profile`'s daemon of `scope` keeps its socket and state, and where
+/// the scope's config is. The user's honour `$CONFLUX_CONFIG` like the CLI; the
+/// system daemon does not see this user's environment, so the system's do not.
+///
+/// For testing, `CONFLUX_TEST_SYSTEM_ROOT=<dir>` moves the system's under
+/// `<dir>` (`config.toml`, `run/`, `state/`), as the helper's test mode does.
+pub fn paths(scope: Scope, profile: Option<&str>) -> Option<Paths> {
+    let mut paths = Paths::resolve(scope.mode(), profile).ok()?;
+    if scope == Scope::System {
+        paths.config = PathBuf::from(SYSTEM_CONFIG);
+        if let Some(root) = std::env::var_os("CONFLUX_TEST_SYSTEM_ROOT").map(PathBuf::from) {
+            let profile = profile.filter(|p| *p != DEFAULT_PROFILE);
+            paths.config = root.join("config.toml");
+            paths.state = match profile {
+                Some(p) => root.join("state").join(p),
+                None => root.join("state"),
+            };
+            paths.socket = root.join("run").join(match profile {
+                Some(p) => format!("conflux-{p}.sock"),
+                None => "conflux.sock".to_string(),
+            });
+        }
+    }
+    Some(paths)
+}
+
 pub fn load(scope: Scope) -> Snapshot {
-    let base = Paths::resolve(scope.mode(), None).ok();
-    let mut config_path = match scope {
-        // Like the CLI: `$CONFLUX_CONFIG` applies to the user's own daemon.
-        Scope::User => base.as_ref().map(|p| p.config.clone()).unwrap_or_default(),
-        // The system daemon does not see this user's environment.
-        Scope::System => PathBuf::from(SYSTEM_CONFIG),
-    };
+    let base = paths(scope, None);
+    let mut config_path = base.as_ref().map(|p| p.config.clone()).unwrap_or_default();
     let mut config = read_config(&config_path);
 
     let socket_dir = base
@@ -185,7 +199,7 @@ pub fn load(scope: Scope) -> Snapshot {
     let daemons: Vec<Daemon> = std::iter::once(DEFAULT_PROFILE.to_string())
         .chain(profiles)
         .filter_map(|profile| {
-            let socket = Paths::resolve(scope.mode(), Some(&profile)).ok()?.socket;
+            let socket = paths(scope, Some(&profile))?.socket;
             let state = query(&socket);
             Some(Daemon {
                 profile,

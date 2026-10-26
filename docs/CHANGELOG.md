@@ -16,7 +16,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   checks them, and are reloaded by the running daemons. It manages the user's daemons too:
   one per profile, started, stopped and set to start at login through systemd, added and
   removed with the profiles of their syncs, kept running after logout (lingering), with
-  their log from the journal. The system config and daemons are read-only in it for now.
+  their log from the journal. The system's config and daemons are locked until unlocked
+  with an administrator's password, as in GNOME Settings; then the same pages edit them
+  through `conflux-helper`, a small program run as root with `pkexec` that only writes the
+  system config, acts on the system daemons' units, passes them requests and deletes their
+  state. It quits, locking the app again, on Lock, with the app, or after 5 idle minutes.
 - Daemons answer an `Info` request (version, profile, config file, process id), and report
   each group's `id` and whether it is syncing right now in their status.
 

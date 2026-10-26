@@ -5,9 +5,8 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use conflux_core::config_edit::{write_atomic, ConfigDoc};
+use conflux_core::config_edit::{check_replacement, write_atomic, ConfigDoc};
 use conflux_core::ipc::{client, Request, Response};
-use conflux_core::Config;
 
 /// A change to the config, made on its parsed document.
 pub type Edit = Box<dyn FnOnce(&mut ConfigDoc) -> conflux_core::Result<()> + Send>;
@@ -49,6 +48,25 @@ pub struct Applied {
     pub reload_problems: Vec<String>,
 }
 
+/// Apply `edit` to the config at `path`, which must still read `base`, without
+/// writing it. Returns the new text, or `None` when the edit changes nothing.
+/// Refused like any edit: see [`apply`].
+pub fn prepare(path: &Path, base: &str, edit: Edit) -> Result<Option<String>, EditError> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| EditError::Failed(format!("{}: {e}", path.display())))?;
+    if text != base {
+        return Err(EditError::Changed);
+    }
+    let mut doc = ConfigDoc::parse(&text).map_err(|e| EditError::Refused(e.short()))?;
+    edit(&mut doc).map_err(|e| EditError::Refused(e.short()))?;
+    let new = doc.to_string();
+    if new == text {
+        return Ok(None);
+    }
+    check_replacement(Some(&text), &new).map_err(|e| EditError::Refused(e.short()))?;
+    Ok(Some(new))
+}
+
 /// Apply `edit` to the config at `path`, which must still read `base`, then ask
 /// the daemons on `sockets` to reload it.
 ///
@@ -61,25 +79,12 @@ pub fn apply(
     edit: Edit,
     sockets: &[PathBuf],
 ) -> Result<Applied, EditError> {
-    let text = std::fs::read_to_string(path)
-        .map_err(|e| EditError::Failed(format!("{}: {e}", path.display())))?;
-    if text != base {
-        return Err(EditError::Changed);
-    }
-    let mut doc = ConfigDoc::parse(&text).map_err(|e| EditError::Refused(e.short()))?;
-    edit(&mut doc).map_err(|e| EditError::Refused(e.short()))?;
-    let new = doc.to_string();
-    if new == text {
+    let Some(new) = prepare(path, base, edit)? else {
         return Ok(Applied {
-            text,
+            text: base.to_string(),
             reload_problems: Vec::new(),
         });
-    }
-    if let Err(e) = Config::from_toml_str(&new) {
-        if Config::from_toml_str(&text).is_ok() {
-            return Err(EditError::Refused(e.short()));
-        }
-    }
+    };
     write_atomic(path, &new).map_err(|e| EditError::Failed(format!("{}: {e}", path.display())))?;
     Ok(Applied {
         text: new,
@@ -122,6 +127,7 @@ pub fn create(path: &Path) -> Result<(), String> {
 mod tests {
     use super::*;
     use conflux_core::config_edit::Section;
+    use conflux_core::Config;
 
     const VALID: &str =
         "# mine\n[daemon]\ndebounce = \"60m\"\n\n[[sync]]\nremote_fs = \"/b\"\nlocal = \"/a\"\n";

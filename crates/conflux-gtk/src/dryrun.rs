@@ -5,14 +5,15 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use conflux_core::engine::PlanOp;
-use conflux_core::ipc::{client, Request, Response, SyncTarget};
-use gtk::{gio, glib};
+use conflux_core::ipc::{Request, Response, SyncTarget};
+use gtk::glib;
 
+use crate::scope::ScopeView;
 use crate::ui;
-use crate::window::Ctx;
 
-/// Ask the daemon on `socket` for a dry run of `label` and show it.
-pub fn show(ctx: &Rc<Ctx>, socket: PathBuf, label: String, title: &str) {
+/// Ask `profile`'s daemon on `socket` for a dry run of `label` and show it.
+pub fn show(view: &Rc<ScopeView>, socket: PathBuf, profile: String, label: String, title: &str) {
+    let ctx = view.ctx();
     let stack = gtk::Stack::new();
     ui::replace_child(&stack, "status", &ui::loading("Looking for Changes"));
     let toolbar = adw::ToolbarView::new();
@@ -26,12 +27,11 @@ pub fn show(ctx: &Rc<Ctx>, socket: PathBuf, label: String, title: &str) {
         .build();
     dialog.present(Some(&ctx.window));
 
+    let view = view.clone();
     glib::spawn_future_local(async move {
-        let result = gio::spawn_blocking(move || {
-            client::send(&socket, &Request::Plan(SyncTarget::Group(label)), None)
-        })
-        .await
-        .expect("the dry-run request panicked");
+        let result = view
+            .ask(socket, profile, Request::Plan(SyncTarget::Group(label)))
+            .await;
         let plan = match result {
             Ok(Response::Planned(mut plans)) if !plans.is_empty() => {
                 let plan = plans.remove(0);
@@ -43,7 +43,7 @@ pub fn show(ctx: &Rc<Ctx>, socket: PathBuf, label: String, title: &str) {
             }
             Ok(Response::Error(e)) => Err(e),
             Ok(_) => Err("unexpected answer from the daemon".to_string()),
-            Err(e) => Err(format!("could not reach the daemon: {e}")),
+            Err(e) => Err(e),
         };
         match plan {
             Err(e) => {

@@ -1,9 +1,9 @@
 [workspace]
 resolver = "2"
-members = ["crates/conflux-core", "crates/conflux", "crates/conflux-gtk"]
+members = ["crates/conflux-core", "crates/conflux", "crates/conflux-gtk", "crates/conflux-helper"]
 # The GUI needs GTK and libadwaita dev libraries; a plain `cargo build` / `cargo
 # test` skips it, `-p conflux-gtk` or `--workspace` includes it.
-default-members = ["crates/conflux-core", "crates/conflux"]
+default-members = ["crates/conflux-core", "crates/conflux", "crates/conflux-helper"]
 
 [workspace.package]
 version = "1.1.0"

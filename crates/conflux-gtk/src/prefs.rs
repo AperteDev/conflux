@@ -45,7 +45,7 @@ pub fn show(view: &Rc<ScopeView>) {
         .icon_name("emblem-system-symbolic")
         .build();
     if !form.editable() {
-        page.set_description("The system configuration can only be read here for now");
+        page.set_description("Unlock to change the system configuration");
     }
     page.add(&group(
         "Daemon",

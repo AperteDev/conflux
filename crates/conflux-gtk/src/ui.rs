@@ -3,6 +3,7 @@
 use adw::prelude::*;
 use gtk::{gio, glib};
 
+use crate::model::Scope;
 use crate::text;
 
 /// Load a Blueprint view compiled by `build.rs`.
@@ -70,10 +71,11 @@ pub fn replace_child(stack: &gtk::Stack, name: &str, child: &impl IsA<gtk::Widge
 }
 
 /// Add a button to `row` that picks a folder (or a file) and puts its path in
-/// the row, with `~` for the home folder, then calls `picked`. Returns the
-/// button, for rows that need it only sometimes.
+/// the row, written as `scope` reads it (see `text::path`), then calls
+/// `picked`. Returns the button, for rows that need it only sometimes.
 pub fn add_chooser(
     window: &adw::ApplicationWindow,
+    scope: Scope,
     row: &adw::EntryRow,
     folder: bool,
     picked: impl Fn(&adw::EntryRow) + 'static,
@@ -100,7 +102,7 @@ pub fn add_chooser(
         let picked = picked.clone();
         let done = move |result: Result<gio::File, glib::Error>| {
             if let Some(path) = result.ok().and_then(|f| f.path()) {
-                target.set_text(&text::path(&path));
+                target.set_text(&text::path(scope, &path));
                 picked(&target);
             }
         };

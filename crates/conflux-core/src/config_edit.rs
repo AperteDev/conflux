@@ -293,6 +293,19 @@ fn same_value(a: &Value, b: &Value) -> bool {
     a.to_string().trim() == b.to_string().trim()
 }
 
+/// Whether `new` may replace `old` (`None`: there is no file yet). A config the
+/// daemon accepts must not be replaced by one it refuses; one it already refuses
+/// may be, so that it can be fixed step by step. A new file must be accepted.
+pub fn check_replacement(old: Option<&str>, new: &str) -> Result<()> {
+    if let Err(e) = Config::from_toml_str(new) {
+        let already_refused = old.is_some_and(|old| Config::from_toml_str(old).is_err());
+        if !already_refused {
+            return Err(e);
+        }
+    }
+    Ok(())
+}
+
 /// Replace the file at `path` with `text` in one step: write a temporary file
 /// next to it, give it the old file's mode and owner, then rename it over the
 /// old one. A reader never sees a half-written config.
@@ -493,6 +506,17 @@ include = ["**"]
         let text = d.to_string();
         assert!(text.starts_with(example), "the example's text changed");
         d.config().unwrap();
+    }
+
+    #[test]
+    fn replacements_may_not_break_an_accepted_config() {
+        let good = "[[sync]]\nremote_fs = \"/b\"\nlocal = \"/a\"\n";
+        let bad = "[[sync]]\nlocal = \"/a\"\n";
+        assert!(check_replacement(Some(good), good).is_ok());
+        assert!(check_replacement(Some(good), bad).is_err());
+        assert!(check_replacement(Some(bad), bad).is_ok());
+        assert!(check_replacement(None, good).is_ok());
+        assert!(check_replacement(None, bad).is_err());
     }
 
     #[test]

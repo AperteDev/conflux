@@ -8,6 +8,7 @@ mod detail;
 mod dryrun;
 mod editor;
 mod form;
+mod helper;
 mod model;
 mod prefs;
 mod scope;
@@ -22,7 +23,12 @@ use gtk::{gio, glib};
 pub const APP_ID: &str = "dev.aperte.Conflux";
 
 fn main() -> glib::ExitCode {
-    let app = adw::Application::builder().application_id(APP_ID).build();
+    // `--gapplication-app-id` gives a test copy its own id, so it runs next to
+    // the one in use instead of handing over to it (scripts/gui-shell.sh).
+    let app = adw::Application::builder()
+        .application_id(APP_ID)
+        .flags(gio::ApplicationFlags::CAN_OVERRIDE_APP_ID)
+        .build();
     app.connect_activate(|app| match app.active_window() {
         Some(window) => window.present(),
         None => window::open(app),

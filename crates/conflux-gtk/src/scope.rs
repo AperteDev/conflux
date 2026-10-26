@@ -10,12 +10,14 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use adw::prelude::*;
+use conflux_core::helper::{HelperRequest, HelperResponse, UnitAction};
 use conflux_core::ipc::{client, Request, Response, SyncTarget};
 use gtk::{gio, glib};
 
 use crate::editor::{self, Edit, EditError};
+use crate::helper::Helper;
 use crate::model::{self, ConfigState, Daemon, DaemonState, Loaded, Scope, Snapshot};
-use crate::systemd::{Action, Systemd, Unit};
+use crate::systemd::{Systemd, Unit};
 use crate::window::Ctx;
 use crate::{daemons, detail, dryrun, text, ui};
 
@@ -41,6 +43,9 @@ pub struct ScopeView {
     /// Banners of open pages, shown when the file changes on disk under them.
     banners: RefCell<Vec<glib::WeakRef<adw::Banner>>>,
     monitor: RefCell<Option<(PathBuf, gio::FileMonitor)>>,
+    /// The privileged helper, while the system scope is unlocked.
+    helper: RefCell<Option<Rc<Helper>>>,
+    unlocking: Cell<bool>,
 }
 
 struct Job {
@@ -109,6 +114,8 @@ impl ScopeView {
             editing: Cell::new(false),
             banners: RefCell::default(),
             monitor: RefCell::default(),
+            helper: RefCell::default(),
+            unlocking: Cell::new(false),
         });
         ui::replace_child(&view.syncs, "status", &ui::loading("Loading"));
         ui::replace_child(&view.remotes, "status", &ui::loading("Loading"));
@@ -150,10 +157,94 @@ impl ScopeView {
         &self.ctx
     }
 
-    /// Whether this app may change the scope's config. The system's needs
-    /// unlocking, which comes later; until then it is shown read-only.
+    /// Whether this app may change the scope's config and daemons: the user's
+    /// always, the system's once unlocked.
     pub fn editable(&self) -> bool {
-        self.scope == Scope::User
+        self.scope == Scope::User || self.helper.borrow().is_some()
+    }
+
+    /// Whether this is the system scope, locked.
+    pub fn locked(&self) -> bool {
+        self.scope == Scope::System && self.helper.borrow().is_none()
+    }
+
+    /// The helper, while unlocked.
+    pub fn helper(&self) -> Option<Rc<Helper>> {
+        self.helper.borrow().clone()
+    }
+
+    /// Start the helper, which asks for authentication; editing is allowed once
+    /// it answers.
+    pub fn unlock(self: &Rc<Self>) {
+        if self.scope != Scope::System || self.helper().is_some() || self.unlocking.replace(true) {
+            return;
+        }
+        let view = self.clone();
+        let weak = Rc::downgrade(self);
+        glib::spawn_future_local(async move {
+            let started = Helper::start(move || {
+                if let Some(view) = weak.upgrade() {
+                    // Gone on its own: idle too long, or killed. (After Lock it
+                    // is taken already.)
+                    let helper = view.helper.borrow_mut().take();
+                    if helper.is_some() {
+                        view.ctx.toast("Locked again");
+                        view.lock_changed();
+                    }
+                }
+            })
+            .await;
+            view.unlocking.set(false);
+            match started {
+                Ok(helper) => {
+                    *view.helper.borrow_mut() = Some(helper);
+                    view.lock_changed();
+                }
+                Err(e) => view.ctx.toast(&e),
+            }
+        });
+    }
+
+    /// Let the helper go: the system scope is read-only again.
+    pub fn lock(&self) {
+        // Taken first: the borrow must end before the UI looks at the lock again.
+        let helper = self.helper.borrow_mut().take();
+        if let Some(helper) = helper {
+            helper.stop();
+            self.lock_changed();
+        }
+    }
+
+    /// Rows and pages were built for the old lock state: build them again.
+    fn lock_changed(&self) {
+        self.state.borrow_mut().built_from = None;
+        self.ctx.nav.pop_to_tag("main");
+        self.ctx.changed();
+        self.ctx.refresh();
+    }
+
+    /// Ask `profile`'s daemon (on `socket`) something: through the helper while
+    /// unlocked, so a system daemon takes it from root; directly otherwise.
+    pub async fn ask(
+        &self,
+        socket: PathBuf,
+        profile: String,
+        request: Request,
+    ) -> Result<Response, String> {
+        if let Some(helper) = self.helper() {
+            return match helper
+                .call(&HelperRequest::Ipc { profile, request })
+                .await?
+            {
+                HelperResponse::Ipc(response) => Ok(response),
+                HelperResponse::Error(e) => Err(e),
+                _ => Err("unexpected answer from the helper".to_string()),
+            };
+        }
+        gio::spawn_blocking(move || client::send(&socket, &request, None))
+            .await
+            .expect("the daemon request panicked")
+            .map_err(|e| format!("Could not reach the daemon: {e}"))
     }
 
     pub fn generation(&self) -> u64 {
@@ -214,21 +305,74 @@ impl ScopeView {
                         .borrow()
                         .clone()
                         .unwrap_or_else(|| loaded.text.clone()),
-                    running_sockets(s),
+                    running(s),
                 )),
                 _ => None,
             })
         };
-        let Some((path, base, sockets)) = target else {
+        let Some((path, base, daemons)) = target else {
             done(Err("There is no config file to change".to_string()));
             return self.pump();
+        };
+        let helper = match self.scope {
+            Scope::User => None,
+            Scope::System => match self.helper() {
+                Some(helper) => Some(helper),
+                None => {
+                    done(Err("Unlock to change the system configuration".to_string()));
+                    return self.pump();
+                }
+            },
         };
         self.editing.set(true);
         let view = self.clone();
         glib::spawn_future_local(async move {
-            let result = gio::spawn_blocking(move || editor::apply(&path, &base, edit, &sockets))
-                .await
-                .expect("writing the config panicked");
+            let result = match helper {
+                // The user's own file: written here.
+                None => {
+                    let sockets = daemons
+                        .into_iter()
+                        .map(|(socket, _)| socket)
+                        .collect::<Vec<_>>();
+                    gio::spawn_blocking(move || editor::apply(&path, &base, edit, &sockets))
+                        .await
+                        .expect("writing the config panicked")
+                }
+                // The system's: made here, written by the helper.
+                Some(helper) => {
+                    let base2 = base.clone();
+                    let prepared =
+                        gio::spawn_blocking(move || editor::prepare(&path, &base2, edit))
+                            .await
+                            .expect("editing the config panicked");
+                    match prepared {
+                        Ok(None) => Ok(editor::Applied {
+                            text: base,
+                            reload_problems: Vec::new(),
+                        }),
+                        Ok(Some(new)) => {
+                            let request = HelperRequest::WriteConfig {
+                                expected: Some(base),
+                                text: new.clone(),
+                                reload: daemons.into_iter().map(|(_, profile)| profile).collect(),
+                            };
+                            match helper.call(&request).await {
+                                Ok(HelperResponse::Done { problems }) => Ok(editor::Applied {
+                                    text: new,
+                                    reload_problems: problems,
+                                }),
+                                Ok(HelperResponse::Changed) => Err(EditError::Changed),
+                                Ok(HelperResponse::Error(e)) => Err(EditError::Refused(e)),
+                                Ok(_) => Err(EditError::Failed(
+                                    "unexpected answer from the helper".to_string(),
+                                )),
+                                Err(e) => Err(EditError::Failed(e)),
+                            }
+                        }
+                        Err(e) => Err(e),
+                    }
+                }
+            };
             view.editing.set(false);
             match result {
                 Ok(applied) => {
@@ -250,16 +394,32 @@ impl ScopeView {
         });
     }
 
-    /// Start the user's config from the example.
+    /// Start the scope's config from the example.
     fn create_config(self: &Rc<Self>) {
         let Some(path) = self.config_path() else {
             return;
         };
         let view = self.clone();
+        let helper = self.helper();
         glib::spawn_future_local(async move {
-            let result = gio::spawn_blocking(move || editor::create(&path))
-                .await
-                .expect("creating the config panicked");
+            let result = match helper {
+                None => gio::spawn_blocking(move || editor::create(&path))
+                    .await
+                    .expect("creating the config panicked"),
+                Some(helper) => {
+                    let request = HelperRequest::WriteConfig {
+                        expected: None,
+                        text: editor::EXAMPLE.to_string(),
+                        reload: Vec::new(),
+                    };
+                    match helper.call(&request).await {
+                        Ok(HelperResponse::Done { .. }) => Ok(()),
+                        Ok(HelperResponse::Changed) => Err("there is one already".to_string()),
+                        Ok(HelperResponse::Error(e)) | Err(e) => Err(e),
+                        Ok(_) => Err("unexpected answer from the helper".to_string()),
+                    }
+                }
+            };
             match result {
                 Ok(()) => view.ctx.toast("Created the config file"),
                 Err(e) => view
@@ -438,7 +598,7 @@ impl ScopeView {
             };
             actions.add_action_entries([
                 action("restart", |view, p| {
-                    daemons::control(view, p, Action::Restart)
+                    daemons::control(view, p, UnitAction::Restart)
                 }),
                 action("log", daemons::show_log),
                 action("remove", daemons::remove),
@@ -452,9 +612,9 @@ impl ScopeView {
                         let action = if button.icon_name().as_deref()
                             == Some("media-playback-stop-symbolic")
                         {
-                            Action::Stop
+                            UnitAction::Stop
                         } else {
-                            Action::Start
+                            UnitAction::Start
                         };
                         daemons::control(&view, &profile, action);
                     }
@@ -695,9 +855,17 @@ impl ScopeView {
         let mut any = false;
         for (index, sync) in loaded.raw.syncs.iter().enumerate() {
             let (title, kind, icon) = if let Some(dir) = &sync.remote_fs {
-                (text::path(dir), "Folder", "drive-harddisk-symbolic")
+                (
+                    text::path(self.scope, dir),
+                    "Folder",
+                    "drive-harddisk-symbolic",
+                )
             } else if let Some(repo) = &sync.git_repo {
-                (text::path(repo), "Git clone", "network-server-symbolic")
+                (
+                    text::path(self.scope, repo),
+                    "Git clone",
+                    "network-server-symbolic",
+                )
             } else {
                 continue;
             };
@@ -822,7 +990,7 @@ impl ScopeView {
             };
             row.row.set_subtitle(&format!(
                 "{}\n{} · {line}",
-                text::mapping(sync),
+                text::mapping(self.scope, sync),
                 text::trigger(sync, &loaded.raw.daemon)
             ));
             let failed = status.is_some_and(|(_, g)| g.last_error.is_some()) && !busy;
@@ -851,29 +1019,31 @@ impl ScopeView {
         }
     }
 
-    /// The daemon running the sync at `index`: its socket and the sync's label.
-    fn runner(&self, index: usize) -> Option<(PathBuf, String, String)> {
+    /// The daemon running the sync at `index` (its socket and profile), and
+    /// the sync's label and title.
+    fn runner(&self, index: usize) -> Option<(PathBuf, String, String, String)> {
         let state = self.state.borrow();
         let snapshot = state.snapshot.as_ref()?;
         let row = state.sync_rows.iter().find(|r| r.index == index)?;
         let (daemon, _) = snapshot.status_of(&row.label, row.id.as_deref())?;
-        Some((daemon.socket.clone(), row.label.clone(), row.title.clone()))
+        Some((
+            daemon.socket.clone(),
+            daemon.profile.clone(),
+            row.label.clone(),
+            row.title.clone(),
+        ))
     }
 
     fn sync_now(self: &Rc<Self>, index: usize) {
-        let Some((socket, label, title)) = self.runner(index) else {
+        let Some((socket, profile, label, title)) = self.runner(index) else {
             return;
         };
         self.state.borrow_mut().busy.insert(label.clone());
         self.update();
         let view = self.clone();
         glib::spawn_future_local(async move {
-            let target = label.clone();
-            let result = gio::spawn_blocking(move || {
-                client::send(&socket, &Request::Sync(SyncTarget::Group(target)), None)
-            })
-            .await
-            .expect("the sync request panicked");
+            let request = Request::Sync(SyncTarget::Group(label.clone()));
+            let result = view.ask(socket, profile, request).await;
             view.state.borrow_mut().busy.remove(&label);
             view.ctx.toast(&sync_outcome(&title, result));
             view.update();
@@ -882,55 +1052,44 @@ impl ScopeView {
     }
 
     fn sync_all(self: &Rc<Self>) {
-        let (sockets, labels) = {
+        let (daemons, labels) = {
             let state = self.state.borrow();
             let Some(snapshot) = &state.snapshot else {
                 return;
             };
-            let sockets: Vec<PathBuf> = snapshot
-                .daemons
-                .iter()
-                .filter(|d| matches!(d.state, DaemonState::Running { .. }))
-                .map(|d| d.socket.clone())
-                .collect();
             let labels: Vec<String> = state
                 .sync_rows
                 .iter()
                 .filter(|r| snapshot.status_of(&r.label, r.id.as_deref()).is_some())
                 .map(|r| r.label.clone())
                 .collect();
-            (sockets, labels)
+            (running(snapshot), labels)
         };
         self.state.borrow_mut().busy.extend(labels.iter().cloned());
         self.update();
         let view = self.clone();
         glib::spawn_future_local(async move {
-            let results = gio::spawn_blocking(move || {
-                sockets
-                    .iter()
-                    .map(|s| client::send(s, &Request::Sync(SyncTarget::All), None))
-                    .collect::<Vec<_>>()
-            })
-            .await
-            .expect("the sync requests panicked");
+            let mut failed = Vec::new();
+            for (socket, profile) in daemons {
+                match view
+                    .ask(socket, profile, Request::Sync(SyncTarget::All))
+                    .await
+                {
+                    Ok(Response::Synced(outcomes)) => failed.extend(
+                        outcomes
+                            .into_iter()
+                            .filter_map(|o| o.error.map(|e| format!("{}: {e}", o.label))),
+                    ),
+                    Ok(Response::Error(e)) | Err(e) => failed.push(e),
+                    Ok(_) => {}
+                }
+            }
             {
                 let mut state = view.state.borrow_mut();
                 for label in &labels {
                     state.busy.remove(label);
                 }
             }
-            let failed: Vec<String> = results
-                .into_iter()
-                .flat_map(|r| match r {
-                    Ok(Response::Synced(outcomes)) => outcomes
-                        .into_iter()
-                        .filter_map(|o| o.error.map(|e| format!("{}: {e}", o.label)))
-                        .collect(),
-                    Ok(Response::Error(e)) => vec![e],
-                    Ok(_) => Vec::new(),
-                    Err(e) => vec![e.to_string()],
-                })
-                .collect();
             view.ctx.toast(&match failed.as_slice() {
                 [] => "Synced all".to_string(),
                 [one] => format!("A sync failed: {one}"),
@@ -941,9 +1100,9 @@ impl ScopeView {
         });
     }
 
-    fn dry_run(&self, index: usize) {
-        if let Some((socket, label, title)) = self.runner(index) {
-            dryrun::show(&self.ctx, socket, label, &title);
+    fn dry_run(self: &Rc<Self>, index: usize) {
+        if let Some((socket, profile, label, title)) = self.runner(index) {
+            dryrun::show(self, socket, profile, label, &title);
         }
     }
 }
@@ -976,13 +1135,13 @@ fn loaded_text(snapshot: &Snapshot) -> Option<String> {
     }
 }
 
-/// The sockets of the snapshot's running daemons.
-fn running_sockets(snapshot: &Snapshot) -> Vec<PathBuf> {
+/// The socket and profile of each of the snapshot's running daemons.
+fn running(snapshot: &Snapshot) -> Vec<(PathBuf, String)> {
     snapshot
         .daemons
         .iter()
         .filter(|d| matches!(d.state, DaemonState::Running { .. }))
-        .map(|d| d.socket.clone())
+        .map(|d| (d.socket.clone(), d.profile.clone()))
         .collect()
 }
 
@@ -993,7 +1152,7 @@ impl ScopeView {
         path: &std::path::Path,
         state: &ConfigState,
     ) -> adw::StatusPage {
-        let path = text::path(path);
+        let path = text::path(self.scope, path);
         let (icon, title, description) = match state {
             ConfigState::Missing => (
                 "document-new-symbolic",
@@ -1130,7 +1289,7 @@ fn not_running_text(sync: &conflux_core::config::Sync) -> String {
     }
 }
 
-fn sync_outcome(title: &str, result: std::io::Result<Response>) -> String {
+fn sync_outcome(title: &str, result: Result<Response, String>) -> String {
     match result {
         Ok(Response::Synced(outcomes)) => match outcomes.first() {
             Some(o) => match (&o.summary, &o.error) {
@@ -1142,7 +1301,7 @@ fn sync_outcome(title: &str, result: std::io::Result<Response>) -> String {
         },
         Ok(Response::Error(e)) => format!("{title}: {e}"),
         Ok(_) => format!("{title}: unexpected answer from the daemon"),
-        Err(e) => format!("Could not reach the daemon: {e}"),
+        Err(e) => format!("{title}: {e}"),
     }
 }
 

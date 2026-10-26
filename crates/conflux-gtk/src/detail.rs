@@ -673,7 +673,10 @@ pub fn remote_page(
             continue;
         }
         any = true;
-        let row = ui::row(&text::sync_title(s, &loaded.label(i)), &text::mapping(s));
+        let row = ui::row(
+            &text::sync_title(s, &loaded.label(i)),
+            &text::mapping(view.scope, s),
+        );
         row.set_activatable(true);
         row.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
         let (view, snapshot) = (view.clone(), snapshot.clone());

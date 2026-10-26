@@ -317,10 +317,22 @@ name = "conflux-gtk"
 version = "1.1.0"
 dependencies = [
  "conflux-core",
+ "futures-channel",
  "gtk4",
  "humantime",
  "libadwaita",
  "libc",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "conflux-helper"
+version = "1.1.0"
+dependencies = [
+ "conflux-core",
+ "libc",
+ "serde_json",
  "tempfile",
 ]
 

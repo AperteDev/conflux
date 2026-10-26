@@ -10,6 +10,7 @@ pub mod engine;
 pub mod error;
 pub mod gitrepo;
 pub mod hash;
+pub mod helper;
 pub mod index;
 pub mod ipc;
 pub mod matcher;

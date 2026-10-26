@@ -63,6 +63,10 @@ Adw.ApplicationWindow window {
             }
           }
 
+          // The system scope's lock: changing it needs unlocking (src/helper.rs).
+          [top]
+          Adw.Banner lock_banner {}
+
           // A problem with the shown scope's config, set in src/window.rs.
           [top]
           Adw.Banner banner {}
