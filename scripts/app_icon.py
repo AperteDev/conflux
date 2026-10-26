@@ -22,7 +22,7 @@ THETA = math.radians(45)
 WELL = (64, 62, 46)
 DEPTH = 2  # height of the gears' front profile
 # GNOME palette
-COLOR = dict(wall="#241f31", floor="#3d3846", symbolic="#222222")
+COLOR = dict(plate_front="#9a9996", wall="#241f31", floor="#3d3846", symbolic="#222222")
 # Stamps pressed into the gears: (floor, top wall in shadow), tinted with green, blue and yellow
 STAMP = dict(
     sync=("#6f9a7f", "#2f4a3a"),
@@ -35,9 +35,6 @@ STAMP_WALL = 1.2  # how much of the wall under the top edges shows
 GRADIENTS = [
     ("plate", (0, 0, 0.35, 1), [(0, "#f6f5f4"), (0.45, "#deddda"), (0.55, "#d0cfcc"),
                                 (1, "#c0bfbc")]),
-    ("plate-front", (0, 0, 1, 0), [(0, "#77767b"), (0.2, "#9a9996"), (0.5, "#f6f5f4"),
-                                   (0.8, "#9a9996"), (1, "#77767b")]),
-    ("well-lip", (0, 0, 0, 1), [(0.6, "#ffffff", 0), (1, "#ffffff", 1)]),
     ("gear", (0, 0, 1, 1), [(0, "#ffffff"), (0.4, "#deddda"), (0.55, "#f6f5f4"),
                             (1, "#c0bfbc")]),
     ("gear-front", (0, 0, 1, 0), [(0, "#3d3846"), (0.5, "#77767b"), (1, "#3d3846")]),
@@ -146,9 +143,8 @@ def gears() -> list[dict]:
 def gradient(name: str, box: tuple, stops: list) -> str:
     x1, y1, x2, y2 = box
     out = [f'<linearGradient id="{name}" x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}">']
-    for offset, color, *opacity in stops:
-        alpha = f' stop-opacity="{opacity[0]}"' if opacity else ""
-        out.append(f'<stop offset="{offset}" stop-color="{color}"{alpha}/>')
+    for offset, color in stops:
+        out.append(f'<stop offset="{offset}" stop-color="{color}"/>')
     return "".join(out) + "</linearGradient>"
 
 
@@ -183,9 +179,8 @@ def icon() -> str:
         f'<clipPath id="well"><circle cx="{wx}" cy="{wy}" r="{wr}"/></clipPath>',
         *(line for defs, _ in stamps for line in defs),
         "</defs>",
-        '<rect x="12" y="12" width="104" height="104" rx="16" fill="url(#plate-front)"/>',
+        f'<rect x="12" y="12" width="104" height="104" rx="16" fill="{c["plate_front"]}"/>',
         '<rect x="12" y="12" width="104" height="100" rx="16" fill="url(#plate)"/>',
-        f'<circle cx="{wx}" cy="{wy + 1.5}" r="{wr + 0.5}" fill="url(#well-lip)"/>',
         f'<circle cx="{wx}" cy="{wy}" r="{wr}" fill="{c["wall"]}"/>',
         '<g clip-path="url(#well)">',
         f'<circle cx="{wx}" cy="{wy + 4}" r="{wr}" fill="{c["floor"]}"/>',
