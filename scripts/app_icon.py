@@ -18,13 +18,18 @@ BIG = dict(cx=64, cy=52, n=12, ro=28, rr=22.5)
 SMALL = dict(n=8, ro=18.5, rr=13.5)
 THETA = math.radians(45)
 WELL = (64, 62, 46)
-DEPTH = 3  # height of the gears' front profile
+DEPTH = 2  # height of the gears' front profile
 # GNOME palette
-COLOR = dict(
-    wall="#241f31", floor="#3d3846", stamp="#77767b", stamp_shadow="#3d3846",
-    stamp_light="#ffffff", cloud="#3584e4", folder_back="#e5a50a", folder="#f6d32d",
-    symbolic="#222222",
+COLOR = dict(wall="#241f31", floor="#3d3846", symbolic="#222222")
+# Stamps pressed into the gears: (floor, top wall in shadow, bottom wall in light), tinted with
+# green, blue and yellow
+STAMP = dict(
+    sync=("#6f9a7f", "#2f4a3a", "#c4e8d0"),
+    cloud=("#7891ad", "#2f3f55", "#c6d9ef"),
+    folder=("#a89a6c", "#4f4426", "#ece0b4"),
+    folder_front="#bdae7c",
 )
+STAMP_WALL = 1.2  # how much of a wall shows, at the top and at the bottom
 # Gradients: id, (x1, y1, x2, y2) in the box of the shape, stops
 GRADIENTS = [
     ("plate", (0, 0, 0.35, 1), [(0, "#f6f5f4"), (0.45, "#deddda"), (0.55, "#d0cfcc"),
@@ -33,8 +38,8 @@ GRADIENTS = [
                                    (0.8, "#9a9996"), (1, "#77767b")]),
     ("well-lip", (0, 0, 0, 1), [(0.6, "#ffffff", 0), (1, "#ffffff", 1)]),
     ("gear", (0, 0, 1, 1), [(0, "#ffffff"), (0.4, "#deddda"), (0.55, "#f6f5f4"),
-                            (1, "#b0afac")]),
-    ("gear-front", (0, 0, 1, 0), [(0, "#5e5c64"), (0.5, "#9a9996"), (1, "#5e5c64")]),
+                            (1, "#c0bfbc")]),
+    ("gear-front", (0, 0, 1, 0), [(0, "#3d3846"), (0.5, "#77767b"), (1, "#3d3846")]),
 ]
 
 
@@ -93,9 +98,13 @@ def sync(cx: float, cy: float, ro: float, w: float) -> str:
         (cx - math.sqrt(ri**2 - (left - cy) ** 2), left),
     ]
 
+    # the outer arc runs clockwise from the left end over the top to the right bar
+    span = math.pi + math.asin((left - cy) / ro) + math.asin((bottom - cy) / ro)
+    large = 1 if span > math.pi else 0
+
     def half(p: list) -> str:
         p = [f"{num(x)} {num(y)}" for x, y in p]
-        return (f"M{p[0]}A{num(ro)} {num(ro)} 0 1 1 {p[1]}L{p[2]}L{p[3]}L{p[4]}"
+        return (f"M{p[0]}A{num(ro)} {num(ro)} 0 {large} 1 {p[1]}L{p[2]}L{p[3]}L{p[4]}"
                 f"A{num(ri)} {num(ri)} 0 0 0 {p[5]}Z")
 
     return half(points) + half([(2 * cx - x, 2 * cy - y) for x, y in points])
@@ -142,19 +151,38 @@ def gradient(name: str, box: tuple, stops: list) -> str:
     return "".join(out) + "</linearGradient>"
 
 
+def stamp(name: str, d: str, colors: tuple) -> tuple[list, list]:
+    """Defs and layers of the shape d pressed into a surface lit from above: the wall under its
+    top edges in shadow, the one over its bottom edges in light, the floor between them."""
+    floor, shadow, light = colors
+    defs = [
+        f'<clipPath id="{name}-up"><path d="{d}" transform="translate(0 {-STAMP_WALL})"/></clipPath>',
+        f'<clipPath id="{name}-down"><path d="{d}" transform="translate(0 {STAMP_WALL})"/></clipPath>',
+    ]
+    layers = [
+        f'<path d="{d}" fill="{light}"/>',
+        f'<g clip-path="url(#{name}-up)"><path d="{d}" fill="{shadow}"/>',
+        f'<path d="{d}" clip-path="url(#{name}-down)" fill="{floor}"/></g>',
+    ]
+    return defs, layers
+
+
 def icon() -> str:
     wx, wy, wr = WELL
     big, left, right = gears()
     back, front = folder(right["cx"], right["cy"] + 1, 8)
-    stamp = sync(big["cx"], big["cy"], 18.5, 5.5)
+    stamps = [
+        stamp("sync", sync(big["cx"], big["cy"], 15.5, 5), STAMP["sync"]),
+        stamp("cloud", cloud(left["cx"] + 0.5, left["cy"] + 1, 9.5), STAMP["cloud"]),
+        stamp("folder", back, STAMP["folder"]),
+    ]
     c = COLOR
     lines = [
         '<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">',
         "<defs>",
         *(gradient(*g) for g in GRADIENTS),
         f'<clipPath id="well"><circle cx="{wx}" cy="{wy}" r="{wr}"/></clipPath>',
-        # what of the stamp is not in the shadow of its top edges
-        f'<clipPath id="stamp"><path d="{stamp}" transform="translate(0 1.5)"/></clipPath>',
+        *(line for defs, _ in stamps for line in defs),
         "</defs>",
         '<rect x="12" y="12" width="104" height="104" rx="16" fill="url(#plate-front)"/>',
         '<rect x="12" y="12" width="104" height="100" rx="16" fill="url(#plate)"/>',
@@ -171,12 +199,9 @@ def icon() -> str:
         lines.append(f'<path d="{d}" fill="url(#gear)"/>')
     lines += [
         "</g>",
-        f'<path d="{stamp}" transform="translate(0 0.75)" fill="{c["stamp_light"]}"/>',
-        f'<path d="{stamp}" fill="{c["stamp_shadow"]}"/>',
-        f'<path d="{stamp}" clip-path="url(#stamp)" fill="{c["stamp"]}"/>',
-        f'<path d="{cloud(left["cx"] + 0.5, left["cy"] + 1, 9.5)}" fill="{c["cloud"]}"/>',
-        f'<path d="{back}" fill="{c["folder_back"]}"/>',
-        f'<path d="{front}" fill="{c["folder"]}"/>',
+        *(line for _, layers in stamps for line in layers),
+        # the folder's front flap, lying on the floor of its stamp
+        f'<path d="{front}" clip-path="url(#folder-down)" fill="{STAMP["folder_front"]}"/>',
         "</svg>",
     ]
     return "\n".join(lines) + "\n"
