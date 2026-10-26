@@ -13,8 +13,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Sync Now and dry runs. It edits the user's config: every setting of a sync, a remote and
   `[daemon]`, adding and deleting syncs and remotes, and starting a config from the example.
   Edits change only the lines they touch, keep comments, are checked the way the daemon
-  checks them, and are reloaded by the running daemons. The system config is read-only in
-  it for now.
+  checks them, and are reloaded by the running daemons. It manages the user's daemons too:
+  one per profile, started, stopped and set to start at login through systemd, added and
+  removed with the profiles of their syncs, kept running after logout (lingering), with
+  their log from the journal. The system config and daemons are read-only in it for now.
 - Daemons answer an `Info` request (version, profile, config file, process id), and report
   each group's `id` and whether it is syncing right now in their status.
 

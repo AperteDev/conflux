@@ -61,12 +61,18 @@ Update these in the same commit as the change that affects them:
   `config.toml`, then `CONFLUX_CONFIG=<dir>/config.toml XDG_RUNTIME_DIR=<dir>/run
   XDG_STATE_HOME=<dir>/state` for both `target/debug/conflux daemon` and the app (put the
   temp dir under `target/`). The System scope then reads the real `/etc/conflux` read-only.
-- To see and drive it, run it on GTK's Broadway backend: `gtk4-broadwayd :7`, then the app with
-  `GDK_BACKEND=broadway BROADWAY_DISPLAY=:7` and `XDG_CONFIG_HOME` pointing at a dir whose
-  `gtk-4.0/settings.ini` sets `gtk-enable-animations=false`; open `http://127.0.0.1:8087` in
-  Playwright. Click by coordinates (`page.mouse` down/up), and reload the page after each
-  click: broadway.js loses track of the page when a view changes and stops drawing, while the
-  app goes on fine. Some icons may not be drawn; that is Broadway.
+- To see and drive it, run `scripts/gui-shell.sh <scratch dir>` in the background: a headless
+  nested GNOME Shell on its own bus, with the app maximized in it. Then
+  `scripts/gui-drive.py click X Y | scroll X Y N | type TEXT | key NAME | shot FILE` (a
+  1400x1100 screen). Stop it by the pid of its `gnome-shell --headless` (match it with
+  `[w]ayland-display=conflux-gui-shell`); never `pkill gnome-shell`, which is the user's own.
+- The app there stays on the host's session bus, so it sees and controls the user's real
+  systemd units: never start, stop or enable `conflux*` units, or toggle lingering, while
+  testing (they would run the user's real config, or change what starts at login). Test
+  those through profiles that exist only in the scratch config, with their switches off.
+- GTK's Broadway backend (`gtk4-broadwayd`, Playwright on `http://127.0.0.1:8087`) aborts as
+  soon as the Syncs page shows two daemon rows (`append_node_ops` assertion), and when a
+  dialog closes; use it only for quick looks at other pages.
 - Stop the scratch daemon by its pid; `pkill -f "...conflux daemon"` also matches the shell
   running the command and kills it.
 

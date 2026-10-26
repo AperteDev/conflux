@@ -137,6 +137,11 @@ impl ConfigDoc {
         Ok(array.len() - 1)
     }
 
+    /// How many `[[remote]]` or `[[sync]]` tables there are.
+    pub fn len(&self, entry: Entry) -> usize {
+        self.array(entry).map_or(0, ArrayOfTables::len)
+    }
+
     /// Remove the `[[sync]]` at `index`, with the comments right above it.
     pub fn remove_sync(&mut self, index: usize) -> Result<()> {
         let array = self.array_mut(Entry::Sync)?;
@@ -170,8 +175,7 @@ impl ConfigDoc {
             return Ok(());
         }
         self.set(Section::Remote(index), "id", new_id)?;
-        let count = self.array(Entry::Sync).map_or(0, ArrayOfTables::len);
-        for i in 0..count {
+        for i in 0..self.len(Entry::Sync) {
             if self.get(Section::Sync(i), "remote").and_then(Value::as_str) == Some(&old_id) {
                 self.set(Section::Sync(i), "remote", new_id)?;
             }

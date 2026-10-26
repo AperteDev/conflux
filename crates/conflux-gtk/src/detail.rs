@@ -57,11 +57,28 @@ fn page(
     groups: Vec<adw::PreferencesGroup>,
     delete: Option<Delete>,
 ) -> adw::NavigationPage {
+    let button = delete
+        .filter(|_| view.editable())
+        .map(|delete| delete_button(view, delete).upcast());
+    page_with(view, title, groups, button)
+}
+
+/// A page with a banner for when the file changes on disk under it, and
+/// `button` at the end of its header bar.
+pub fn page_with(
+    view: &Rc<ScopeView>,
+    title: &str,
+    groups: Vec<adw::PreferencesGroup>,
+    button: Option<gtk::Widget>,
+) -> adw::NavigationPage {
     let prefs = adw::PreferencesPage::new();
     for g in groups {
         prefs.add(&g);
     }
     let header = adw::HeaderBar::new();
+    if let Some(button) = button {
+        header.pack_end(&button);
+    }
     let banner = adw::Banner::builder()
         .title("The config file changed on disk; this page is out of date")
         .button_label("Back")
@@ -79,32 +96,34 @@ fn page(
     banner.connect_button_clicked(move |_| {
         nav.pop();
     });
-
-    if let Some(Delete { heading, body, run }) = delete.filter(|_| view.editable()) {
-        let button = gtk::Button::builder()
-            .icon_name("user-trash-symbolic")
-            .tooltip_text(heading.as_str())
-            .build();
-        let window = view.ctx().window.clone();
-        button.connect_clicked(move |_| {
-            let dialog = adw::AlertDialog::new(Some(&heading), Some(&body));
-            dialog.add_responses(&[("cancel", "Cancel"), ("delete", "Delete")]);
-            dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
-            dialog.set_default_response(Some("cancel"));
-            let run = run.clone();
-            dialog.choose(
-                Some(&window),
-                gtk::gio::Cancellable::NONE,
-                move |response| {
-                    if response == "delete" {
-                        run();
-                    }
-                },
-            );
-        });
-        header.pack_end(&button);
-    }
     nav_page
+}
+
+/// A header button that runs `delete` once the user confirms it.
+fn delete_button(view: &ScopeView, delete: Delete) -> gtk::Button {
+    let Delete { heading, body, run } = delete;
+    let button = gtk::Button::builder()
+        .icon_name("user-trash-symbolic")
+        .tooltip_text(heading.as_str())
+        .build();
+    let window = view.ctx().window.clone();
+    button.connect_clicked(move |_| {
+        let dialog = adw::AlertDialog::new(Some(&heading), Some(&body));
+        dialog.add_responses(&[("cancel", "Cancel"), ("delete", "Delete")]);
+        dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
+        dialog.set_default_response(Some("cancel"));
+        let run = run.clone();
+        dialog.choose(
+            Some(&window),
+            gtk::gio::Cancellable::NONE,
+            move |response| {
+                if response == "delete" {
+                    run();
+                }
+            },
+        );
+    });
+    button
 }
 
 /// Write `edit` removing an entry, then leave its page.
@@ -457,14 +476,14 @@ pub fn sync_page(
     let other: Vec<&gtk::Widget> = other.iter().collect();
     groups.push(group("Limits", &other));
 
-    groups.push(form.list(
-        "Profiles",
-        "The daemons that run this sync; with none, it never runs",
-        "profiles",
-        sync.profiles.clone(),
-        vec!["default".to_string()],
-        "Add a profile",
-    ));
+    // Profiles with a daemon, and those other syncs use, to pick from.
+    let mut known: Vec<String> = snapshot.daemons.iter().map(|d| d.profile.clone()).collect();
+    for p in config.syncs.iter().flat_map(|s| s.profiles.iter()) {
+        if !known.contains(p) {
+            known.push(p.clone());
+        }
+    }
+    groups.push(form.profiles(known, sync.profiles.clone()));
 
     let delete = remove(
         &form,

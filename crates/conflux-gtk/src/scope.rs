@@ -5,7 +5,7 @@
 //! survives polling.
 
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -15,9 +15,9 @@ use gtk::{gio, glib};
 
 use crate::editor::{self, Edit, EditError};
 use crate::model::{self, ConfigState, Daemon, DaemonState, Loaded, Scope, Snapshot};
-use crate::systemd::Unit;
+use crate::systemd::{Action, Systemd, Unit};
 use crate::window::Ctx;
-use crate::{detail, dryrun, text, ui};
+use crate::{daemons, detail, dryrun, text, ui};
 
 pub struct ScopeView {
     pub scope: Scope,
@@ -53,11 +53,12 @@ struct Job {
 struct State {
     snapshot: Option<Rc<Snapshot>>,
     /// `None` when systemd could not be asked.
-    units: Option<HashMap<String, Unit>>,
+    systemd: Option<Systemd>,
     /// What the rows were built from.
     built_from: Option<String>,
     sync_rows: Vec<SyncRow>,
     daemon_rows: Vec<DaemonRow>,
+    linger: Option<(adw::SwitchRow, Rc<Cell<bool>>)>,
     sync_all: Option<gtk::Button>,
     /// Labels of the syncs started here and still running.
     busy: HashSet<String>,
@@ -79,6 +80,11 @@ struct DaemonRow {
     profile: String,
     row: adw::ActionRow,
     dot: gtk::Image,
+    run: gtk::Button,
+    enable: gtk::Switch,
+    /// Set while the switch follows systemd, so that is not taken for a click.
+    quiet: Rc<Cell<bool>>,
+    actions: gio::SimpleActionGroup,
 }
 
 impl ScopeView {
@@ -133,6 +139,11 @@ impl ScopeView {
 
     pub fn snapshot(&self) -> Option<Rc<Snapshot>> {
         self.state.borrow().snapshot.clone()
+    }
+
+    /// What systemd last said about the scope's daemons.
+    pub fn systemd(&self) -> Option<Systemd> {
+        self.state.borrow().systemd.clone()
     }
 
     pub fn ctx(&self) -> &Rc<Ctx> {
@@ -299,11 +310,7 @@ impl ScopeView {
     }
 
     /// Show a fresh look at the scope.
-    pub fn show(
-        self: &Rc<Self>,
-        snapshot: model::Snapshot,
-        units: Result<HashMap<String, Unit>, glib::Error>,
-    ) {
+    pub fn show(self: &Rc<Self>, snapshot: model::Snapshot, systemd: Result<Systemd, glib::Error>) {
         let snapshot = Rc::new(snapshot);
         let key = structure_key(&snapshot);
         let old_text = self
@@ -317,7 +324,7 @@ impl ScopeView {
         let rebuild = {
             let mut state = self.state.borrow_mut();
             state.snapshot = Some(snapshot.clone());
-            state.units = units.ok();
+            state.systemd = systemd.ok();
             state.built_from.as_deref() != Some(key.as_str())
         };
         if rebuild {
@@ -333,6 +340,7 @@ impl ScopeView {
             let mut state = self.state.borrow_mut();
             state.sync_rows.clear();
             state.daemon_rows.clear();
+            state.linger = None;
             state.sync_all = None;
         }
         let loaded = match &snapshot.config {
@@ -363,24 +371,164 @@ impl ScopeView {
         ui::replace_child(&self.remotes, "list", &self.remotes_page(snapshot, loaded));
     }
 
-    fn daemons_group(&self, snapshot: &Snapshot) -> adw::PreferencesGroup {
+    fn daemons_group(self: &Rc<Self>, snapshot: &Rc<Snapshot>) -> adw::PreferencesGroup {
         let group = adw::PreferencesGroup::builder()
             .title("Daemons")
             .description("One daemon runs each profile")
             .build();
+        if self.editable() {
+            let add = gtk::Button::builder()
+                .label("Add")
+                .valign(gtk::Align::Center)
+                .css_classes(["flat"])
+                .build();
+            let weak = Rc::downgrade(self);
+            add.connect_clicked(move |_| {
+                if let Some(view) = weak.upgrade() {
+                    daemons::add(&view);
+                }
+            });
+            group.set_header_suffix(Some(&add));
+        }
         let mut rows = Vec::new();
         for daemon in &snapshot.daemons {
-            let row = ui::row(&daemon.profile, "");
+            let profile = daemon.profile.clone();
+            let row = ui::row(&profile, "");
+            row.set_activatable(true);
             let dot = gtk::Image::from_icon_name("media-record-symbolic");
             row.add_prefix(&dot);
+
+            let run = gtk::Button::builder()
+                .valign(gtk::Align::Center)
+                .css_classes(["flat"])
+                .visible(false)
+                .build();
+            let enable = gtk::Switch::builder()
+                .valign(gtk::Align::Center)
+                .visible(false)
+                .build();
+            let menu = gio::Menu::new();
+            menu.append(Some("Restart"), Some("daemon.restart"));
+            menu.append(Some("View Log"), Some("daemon.log"));
+            if profile != conflux_core::paths::DEFAULT_PROFILE {
+                menu.append(Some("Remove"), Some("daemon.remove"));
+            }
+            let more = gtk::MenuButton::builder()
+                .icon_name("view-more-symbolic")
+                .tooltip_text("More")
+                .menu_model(&menu)
+                .valign(gtk::Align::Center)
+                .css_classes(["flat"])
+                .build();
+            row.add_suffix(&run);
+            row.add_suffix(&enable);
+            row.add_suffix(&more);
+            row.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
+
+            let actions = gio::SimpleActionGroup::new();
+            let action = |name: &str, run: fn(&Rc<ScopeView>, &str)| {
+                let (weak, profile) = (Rc::downgrade(self), profile.clone());
+                gio::ActionEntry::builder(name)
+                    .activate(move |_: &gio::SimpleActionGroup, _, _| {
+                        if let Some(view) = weak.upgrade() {
+                            run(&view, &profile);
+                        }
+                    })
+                    .build()
+            };
+            actions.add_action_entries([
+                action("restart", |view, p| {
+                    daemons::control(view, p, Action::Restart)
+                }),
+                action("log", daemons::show_log),
+                action("remove", daemons::remove),
+            ]);
+            row.insert_action_group("daemon", Some(&actions));
+
+            {
+                let (weak, profile) = (Rc::downgrade(self), profile.clone());
+                run.connect_clicked(move |button| {
+                    if let Some(view) = weak.upgrade() {
+                        let action = if button.icon_name().as_deref()
+                            == Some("media-playback-stop-symbolic")
+                        {
+                            Action::Stop
+                        } else {
+                            Action::Start
+                        };
+                        daemons::control(&view, &profile, action);
+                    }
+                });
+            }
+            let quiet = Rc::new(Cell::new(false));
+            {
+                let (weak, profile, quiet) = (Rc::downgrade(self), profile.clone(), quiet.clone());
+                enable.connect_active_notify(move |switch| {
+                    if quiet.get() {
+                        return;
+                    }
+                    let Some(view) = weak.upgrade() else {
+                        return;
+                    };
+                    let (switch2, quiet) = (switch.clone(), quiet.clone());
+                    daemons::set_enabled(&view, &profile, switch.is_active(), move || {
+                        quiet.set(true);
+                        switch2.set_active(!switch2.is_active());
+                        quiet.set(false);
+                    });
+                });
+            }
+            {
+                let (weak, profile, snapshot) =
+                    (Rc::downgrade(self), profile.clone(), snapshot.clone());
+                row.connect_activated(move |_| {
+                    if let Some(view) = weak.upgrade() {
+                        let page = daemons::page(&view, &snapshot, &profile);
+                        view.ctx.nav.push(&page);
+                    }
+                });
+            }
             group.add(&row);
             rows.push(DaemonRow {
-                profile: daemon.profile.clone(),
+                profile,
                 row,
                 dot,
+                run,
+                enable,
+                quiet,
+                actions,
             });
         }
-        self.state.borrow_mut().daemon_rows = rows;
+
+        let mut linger = None;
+        if self.scope == Scope::User {
+            let row = adw::SwitchRow::builder()
+                .title("Keep running after logout")
+                .subtitle("Without it, your daemons stop when you log out")
+                .sensitive(self.editable())
+                .build();
+            let quiet = Rc::new(Cell::new(false));
+            let (weak, quiet2) = (Rc::downgrade(self), quiet.clone());
+            row.connect_active_notify(move |row| {
+                if quiet2.get() {
+                    return;
+                }
+                let Some(view) = weak.upgrade() else {
+                    return;
+                };
+                let (row2, quiet) = (row.clone(), quiet2.clone());
+                daemons::set_linger(&view, row.is_active(), move || {
+                    quiet.set(true);
+                    row2.set_active(!row2.is_active());
+                    quiet.set(false);
+                });
+            });
+            group.add(&row);
+            linger = Some((row, quiet));
+        }
+        let mut state = self.state.borrow_mut();
+        state.daemon_rows = rows;
+        state.linger = linger;
         group
     }
 
@@ -586,19 +734,70 @@ impl ScopeView {
             return;
         };
 
+        let editable = self.editable();
         for row in &state.daemon_rows {
             let Some(daemon) = snapshot.daemons.iter().find(|d| d.profile == row.profile) else {
                 continue;
             };
             let unit_name = model::unit_name(&daemon.profile);
-            let unit = state.units.as_ref().map(|u| u.get(&unit_name));
-            let (summary, class) = daemon_text(self.scope, daemon, unit.flatten(), unit.is_some());
+            let unit = state.systemd.as_ref().and_then(|s| s.unit(&unit_name));
+            let (summary, class) = daemon_text(self.scope, daemon, unit, state.systemd.is_some());
             row.row.set_subtitle(&summary);
             for c in ["success", "warning", "error", "dim-label"] {
                 row.dot.remove_css_class(c);
             }
             row.dot.add_css_class(class);
             row.row.set_tooltip_text(daemon_tooltip(daemon).as_deref());
+
+            // Controls for a daemon systemd runs; one started by hand has none.
+            let installed = unit.is_some_and(|u| u.installed);
+            let active = unit.is_some_and(Unit::is_active);
+            let outside = daemons::runs_outside(snapshot, &daemon.profile, active);
+            row.run.set_visible(installed);
+            row.run.set_sensitive(editable && !outside);
+            row.run.set_icon_name(if active {
+                "media-playback-stop-symbolic"
+            } else {
+                "media-playback-start-symbolic"
+            });
+            row.run.set_tooltip_text(Some(if outside {
+                "Running outside systemd; stop it where it was started"
+            } else if active {
+                "Stop"
+            } else {
+                "Start"
+            }));
+            row.enable.set_visible(installed);
+            row.enable.set_sensitive(editable);
+            row.enable.set_tooltip_text(Some(match self.scope {
+                Scope::User => "Start at login",
+                Scope::System => "Start at boot",
+            }));
+            let enabled = unit.is_some_and(|u| u.enabled);
+            if row.enable.is_active() != enabled {
+                row.quiet.set(true);
+                row.enable.set_active(enabled);
+                row.quiet.set(false);
+            }
+            for (name, on) in [
+                ("restart", editable && installed && active),
+                ("log", installed),
+                ("remove", editable),
+            ] {
+                if let Some(action) = row.actions.lookup_action(name) {
+                    action
+                        .downcast::<gio::SimpleAction>()
+                        .expect("a simple action")
+                        .set_enabled(on);
+                }
+            }
+        }
+        if let (Some((row, quiet)), Some(systemd)) = (&state.linger, &state.systemd) {
+            if row.is_active() != systemd.linger {
+                quiet.set(true);
+                row.set_active(systemd.linger);
+                quiet.set(false);
+            }
         }
 
         let now = model::now_secs();
@@ -851,7 +1050,7 @@ impl ScopeView {
 }
 
 /// A daemon's state in a few words, and the style class of its dot.
-fn daemon_text(
+pub fn daemon_text(
     scope: Scope,
     daemon: &Daemon,
     unit: Option<&Unit>,

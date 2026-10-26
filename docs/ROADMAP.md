@@ -150,22 +150,27 @@ New module `conflux_core::config_edit`, on `toml_edit` (already used by `toml`):
 An instance is one daemon of a scope and profile: `conflux.service` for `default`,
 `conflux@<profile>.service` otherwise; its socket and state dir come from `Paths::resolve`.
 
-- **Discovery:** profiles named in the config's syncs plus `default`; unit files and units
-  matching `conflux@*.service` (systemd D-Bus); sockets in the runtime dir, which shows daemons
-  started by hand as "running, not managed by systemd" (no start/stop for those).
-- **Rows:** profile and unit name, state (running, inactive, failed), an enable switch ("Start
-  at login" / "Start at boot"), and a menu with Restart, Reload, View log, Remove.
+- **Discovery:** profiles named in the config's syncs plus `default`, and sockets in the runtime
+  dir; systemd (D-Bus `ListUnitsByNames`, `GetUnitFileState`) tells each one's unit state and
+  whether `conflux@.service` is installed. A daemon started by hand shows as "running, started
+  outside systemd" and gets no start/stop: starting its unit would take over its socket.
+- **Rows:** profile and unit name, state (running, inactive, failed), a start/stop button, an
+  enable switch ("Start at login" / "Start at boot"), and a menu with Restart, View log,
+  Remove. Reloading after a config edit already happens on every write, so no Reload item.
 - **Detail page:** unit, socket, state dir, the config path the daemon reads (from `Info`), and
   every sync group with a switch for its membership in this profile.
-- **Add instance:** profile name checked by `paths::validate_profile` (as the CLI does); a checklist of syncs to include, written to their `profiles` (a sync
-  without `profiles` is implicitly in `default`, so adding `desktop` writes
-  `["default", "desktop"]`); "Start now" and "Start at login/boot".
-- **Remove instance:** stop and disable the unit; optionally drop the profile from the syncs and
-  delete the instance's state dir.
+- **Add instance:** profile name checked by `paths::validate_profile` (as the CLI does); a
+  checklist of syncs to include, written to their `profiles` (a sync without `profiles` is
+  implicitly in `default`, so adding `desktop` writes `["default", "desktop"]`); "Start now"
+  and "Start at login/boot". With no sync chosen it must at least start at login, or nothing
+  would keep it.
+- **Remove instance:** stop and disable the unit; optionally drop the profile from the syncs
+  (a list left as `["default"]` is removed, an empty one stays: that sync then never runs) and
+  delete the instance's state dir. The `default` daemon cannot be removed.
 - **User scope:** "Keep running after logout" sets lingering through logind (allowed for oneself
-  by default).
-- **Sync detail:** "Profiles" becomes a multi-select of known instances; only `default` with no
-  key in the file keeps the key out.
+  by default); its state is read from `/var/lib/systemd/linger/<user>`.
+- **Sync detail:** "Profiles" is a switch per known profile (those with a daemon, or used by
+  another sync) plus an entry for a new one; only `default` writes no key.
 - **View log:** `journalctl [--user] -u <unit> -f` in a dialog (the system journal needs the
   `systemd-journal` group or the helper).
 - Without the template unit installed, Add and Enable are hidden with a note; discovery by
@@ -204,8 +209,9 @@ data/                   .desktop, metainfo, icons, polkit policy, gresource
    Preferences (`[daemon]`), file monitor, validation, automatic reload, Create config. The
    System scope shows the same pages locked until step 5. Profiles are edited as a plain list
    until step 4 makes them a choice of instances.
-4. [ ] **Instance management (user scope):** add and remove, enable switches, profile
-   membership, lingering, log viewer.
+4. [x] **Instance management (user scope):** add and remove, start/stop and enable, profile
+   membership (from the daemon's page and the sync's), lingering, log viewer. Controlling
+   units goes through the user's own systemd manager, so it needs no privileges.
 5. [ ] **System unlock:** helper and polkit policy, banner and lock binding, privileged writes,
    unit control and IPC, journal, state removal, automatic re-lock.
 6. [ ] **Packaging, Arch and tarballs:** the app's data (icon, replacing the stand-in in About;

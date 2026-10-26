@@ -9,6 +9,7 @@ use std::rc::Rc;
 use adw::prelude::*;
 use conflux_core::config::parse_byte_size;
 use conflux_core::config_edit::{toml_edit, ConfigDoc, Section};
+use conflux_core::paths::{validate_profile, DEFAULT_PROFILE};
 use gtk::glib;
 
 use crate::editor::Edit;
@@ -302,6 +303,167 @@ impl Form {
     }
 }
 
+impl Form {
+    /// The profiles of the sync this form edits, as a switch per known profile
+    /// (`known`, those with a daemon or another sync), and an entry to add one.
+    pub fn profiles(
+        self: &Rc<Self>,
+        known: Vec<String>,
+        current: Vec<String>,
+    ) -> adw::PreferencesGroup {
+        let group = adw::PreferencesGroup::builder()
+            .title("Profiles")
+            .description("The daemons that run this sync; with none, it never runs")
+            .build();
+        let Section::Sync(index) = self.section else {
+            return group;
+        };
+        let current = Rc::new(RefCell::new(current));
+        let mut names: Vec<String> = known;
+        for p in current.borrow().iter() {
+            if !names.contains(p) {
+                names.push(p.clone());
+            }
+        }
+        let add_switch = Rc::new({
+            let form = self.clone();
+            let current = current.clone();
+            let group = group.downgrade();
+            move |name: String| -> adw::SwitchRow {
+                let row = adw::SwitchRow::builder()
+                    .title(&name)
+                    .use_markup(false)
+                    .active(current.borrow().contains(&name))
+                    .sensitive(form.editable)
+                    .build();
+                let quiet = Rc::new(Cell::new(false));
+                let (form, current) = (form.clone(), current.clone());
+                row.connect_active_notify(move |row| {
+                    if quiet.get() {
+                        return;
+                    }
+                    let mut list = current.borrow().clone();
+                    if row.is_active() {
+                        if !list.contains(&name) {
+                            list.push(name.clone());
+                        }
+                    } else {
+                        list.retain(|p| *p != name);
+                    }
+                    let (row, current, quiet, saved) =
+                        (row.clone(), current.clone(), quiet.clone(), list.clone());
+                    form.commit(
+                        Box::new(move |doc| set_profiles(doc, index, &list)),
+                        move |ok| {
+                            if ok {
+                                *current.borrow_mut() = saved;
+                            } else {
+                                quiet.set(true);
+                                row.set_active(!row.is_active());
+                                quiet.set(false);
+                            }
+                        },
+                    );
+                });
+                if let Some(group) = group.upgrade() {
+                    group.add(&row);
+                }
+                row
+            }
+        });
+        for name in names {
+            add_switch(name);
+        }
+        if self.editable {
+            let add = adw::EntryRow::builder()
+                .title("Add a profile")
+                .show_apply_button(true)
+                .use_markup(false)
+                .build();
+            let form = self.clone();
+            let current = current.clone();
+            let group_ref = group.downgrade();
+            add.connect_apply(move |entry| {
+                let name = entry.text().trim().to_string();
+                if name.is_empty() || current.borrow().contains(&name) {
+                    return;
+                }
+                if let Err(e) = validate_profile(&name) {
+                    (form.toast)(&reason(e));
+                    return;
+                }
+                let mut list = current.borrow().clone();
+                list.push(name.clone());
+                let (entry, current, add_switch, group_ref, saved) = (
+                    entry.clone(),
+                    current.clone(),
+                    add_switch.clone(),
+                    group_ref.clone(),
+                    list.clone(),
+                );
+                form.commit(
+                    Box::new(move |doc| set_profiles(doc, index, &list)),
+                    move |ok| {
+                        if !ok {
+                            return;
+                        }
+                        *current.borrow_mut() = saved;
+                        ui::reset_entry(&entry, "");
+                        // Keep the entry last.
+                        if let Some(group) = group_ref.upgrade() {
+                            group.remove(&entry);
+                            add_switch(name);
+                            group.add(&entry);
+                        }
+                    },
+                );
+            });
+            group.add(&add);
+        }
+        group
+    }
+}
+
+/// Why `e` refused something, without the "invalid config:" a check of the
+/// whole config puts first.
+pub fn reason(e: conflux_core::Error) -> String {
+    match e {
+        conflux_core::Error::Validation(message) => message,
+        other => other.short(),
+    }
+}
+
+/// The profiles of the sync at `index` as written: its list, or the implicit
+/// `["default"]` when it sets none.
+pub fn profiles_of(doc: &ConfigDoc, index: usize) -> Vec<String> {
+    match doc
+        .get(Section::Sync(index), "profiles")
+        .and_then(toml_edit::Value::as_array)
+    {
+        Some(list) => list
+            .iter()
+            .filter_map(|v| v.as_str().map(str::to_string))
+            .collect(),
+        None => vec![DEFAULT_PROFILE.to_string()],
+    }
+}
+
+/// Write `list` as the profiles of the sync at `index`; the implicit default
+/// (`["default"]`) is written by removing the key.
+pub fn set_profiles(
+    doc: &mut ConfigDoc,
+    index: usize,
+    list: &[String],
+) -> conflux_core::Result<()> {
+    let section = Section::Sync(index);
+    if list == [DEFAULT_PROFILE] {
+        doc.unset(section, "profiles").map(|_| ())
+    } else {
+        let array: toml_edit::Array = list.iter().map(String::as_str).collect();
+        doc.set(section, "profiles", array)
+    }
+}
+
 /// The edit writing `text` as `key` of `section`, or removing it when empty.
 fn setting(
     section: Section,
@@ -451,6 +613,21 @@ mod tests {
             Some("1000")
         );
         assert_eq!(written(&doc, Section::Daemon, "interval"), None);
+    }
+
+    #[test]
+    fn profiles_fall_back_to_the_implicit_default() {
+        let mut doc = ConfigDoc::parse("[[sync]]\nremote_fs = \"/b\"\nlocal = \"/a\"\n").unwrap();
+        assert_eq!(profiles_of(&doc, 0), ["default"]);
+        set_profiles(&mut doc, 0, &["default".into(), "laptop".into()]).unwrap();
+        assert_eq!(profiles_of(&doc, 0), ["default", "laptop"]);
+        set_profiles(&mut doc, 0, &[]).unwrap();
+        assert!(profiles_of(&doc, 0).is_empty());
+        set_profiles(&mut doc, 0, &["default".into()]).unwrap();
+        assert_eq!(
+            doc.to_string(),
+            "[[sync]]\nremote_fs = \"/b\"\nlocal = \"/a\"\n"
+        );
     }
 
     #[test]

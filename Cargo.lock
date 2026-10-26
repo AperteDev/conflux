@@ -320,6 +320,7 @@ dependencies = [
  "gtk4",
  "humantime",
  "libadwaita",
+ "libc",
  "tempfile",
 ]
 

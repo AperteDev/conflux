@@ -3,6 +3,7 @@
 //! source of truth and everything works without this app.
 
 mod add;
+mod daemons;
 mod detail;
 mod dryrun;
 mod editor;

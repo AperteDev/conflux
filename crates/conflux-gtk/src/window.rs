@@ -172,8 +172,8 @@ impl Window {
                 .iter()
                 .map(|d| model::unit_name(&d.profile))
                 .collect();
-            let units = systemd::units(scope, &names).await;
-            view.show(snapshot, units);
+            let systemd = systemd::load(scope, &names).await;
+            view.show(snapshot, systemd);
             view.loading.set(false);
         });
     }

@@ -11,7 +11,7 @@ use crate::scope::ScopeView;
 use crate::ui;
 
 /// A dialog with Cancel and Add, a banner for what is wrong, and `page`.
-fn dialog(title: &str, page: &adw::PreferencesPage) -> (adw::Dialog, gtk::Button, adw::Banner) {
+pub fn dialog(title: &str, page: &adw::PreferencesPage) -> (adw::Dialog, gtk::Button, adw::Banner) {
     let add = gtk::Button::builder()
         .label("Add")
         .css_classes(["suggested-action"])

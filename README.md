@@ -395,8 +395,14 @@ It edits your own config: every setting of a sync, a remote and `[daemon]`
 lines it touches, so your comments and layout stay; it is checked the way the
 daemon checks the file, so a change the daemon would refuse is not saved; and the
 running daemons reload it at once. Leaving a setting empty, or choosing
-"Inherit", removes it from the file. The system config can only be read in the app
-for now.
+"Inherit", removes it from the file.
+
+It manages your daemons, one per profile: start and stop them, have them start at
+login, add one for a new profile with the syncs it runs, remove one, keep them
+running after you log out, and read a daemon's log. They are controlled through
+your systemd user manager, so the units must be installed (they are by the
+packages and `install.sh`). The system config and daemons can only be read in the
+app for now.
 
 It is not packaged yet. To try it, install GTK 4, libadwaita 1.7 or newer and
 `blueprint-compiler`, then, with Rust 1.92 or newer:
