@@ -25,11 +25,10 @@
 		{
 			"label": "run gui",
 			"type": "shell",
-			"command": "cargo",
-			"args": ["run", "-p", "conflux-gtk"],
+			"command": "cargo build -p conflux-helper && cargo run -p conflux-gtk",
 			"problemMatcher": ["$rustc"],
 			"group": "none",
-			"detail": "cargo run -p conflux-gtk (the GTK app; needs GTK, libadwaita and blueprint-compiler)"
+			"detail": "Build the helper the app unlocks the system scope with, then run the GTK app (needs GTK, libadwaita and blueprint-compiler)"
 		},
 		{
 			"label": "release: run the Release workflow",
