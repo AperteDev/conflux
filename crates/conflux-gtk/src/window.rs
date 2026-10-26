@@ -108,6 +108,8 @@ pub fn open(app: &adw::Application) {
     window.connect_destroy(move |_| {
         if let Some(win) = weak.upgrade() {
             win.closed.set(true);
+            // Unlocked lasts as long as the window.
+            win.system.lock();
         }
     });
 

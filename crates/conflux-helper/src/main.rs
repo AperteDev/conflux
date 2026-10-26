@@ -4,9 +4,8 @@
 //! newline-delimited JSON requests on its stdin and reads the answers on its
 //! stdout (see `conflux_core::helper`). It only writes the system config, acts
 //! on the system daemons' units, passes requests to their sockets, and deletes
-//! a daemon's state, each checked; nothing else. It exits when the app closes
-//! its stdin (on Lock, or when the app goes away) or after
-//! [`IDLE_SECS`] without a request, which locks the app again.
+//! a daemon's state, each checked; nothing else. It stays until the app closes
+//! its stdin: on Lock, or when the app's window closes or the app goes away.
 //!
 //! For testing without root, `CONFLUX_TEST_SYSTEM_ROOT=<dir>` makes it work on a
 //! scratch "system" under `<dir>` (`config.toml`, `run/`, `state/`) and refuse
@@ -16,11 +15,10 @@
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 use std::process::{Command, ExitCode};
-use std::sync::mpsc;
 use std::time::Duration;
 
 use conflux_core::config_edit::{check_replacement, write_atomic};
-use conflux_core::helper::{HelperRequest, HelperResponse, UnitAction, IDLE_SECS};
+use conflux_core::helper::{HelperRequest, HelperResponse, UnitAction};
 use conflux_core::ipc::{client, Request, Response};
 use conflux_core::paths::{
     unit_name, validate_profile, Paths, RunMode, DEFAULT_PROFILE, SYSTEM_CONFIG,
@@ -91,17 +89,11 @@ fn main() -> ExitCode {
         }
     };
 
-    // Lines come from a thread, so waiting for one can time out.
-    let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || {
-        for line in io::stdin().lock().lines() {
-            if tx.send(line).is_err() {
-                break;
-            }
-        }
-    });
     let mut out = io::stdout().lock();
-    while let Ok(Ok(line)) = rx.recv_timeout(Duration::from_secs(IDLE_SECS)) {
+    for line in io::stdin().lock().lines() {
+        let Ok(line) = line else {
+            break;
+        };
         if line.trim().is_empty() {
             continue;
         }

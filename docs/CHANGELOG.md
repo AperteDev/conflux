@@ -20,7 +20,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   with an administrator's password, as in GNOME Settings; then the same pages edit them
   through `conflux-helper`, a small program run as root with `pkexec` that only writes the
   system config, acts on the system daemons' units, passes them requests and deletes their
-  state. It quits, locking the app again, on Lock, with the app, or after 5 idle minutes.
+  state. It quits, locking the app again, on Lock or when the window closes.
 - Daemons answer an `Info` request (version, profile, config file, process id), and report
   each group's `id` and whether it is syncing right now in their status.
 

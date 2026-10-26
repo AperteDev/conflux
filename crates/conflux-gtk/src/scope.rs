@@ -184,8 +184,8 @@ impl ScopeView {
         glib::spawn_future_local(async move {
             let started = Helper::start(move || {
                 if let Some(view) = weak.upgrade() {
-                    // Gone on its own: idle too long, or killed. (After Lock it
-                    // is taken already.)
+                    // Gone on its own: killed, or it crashed. (After Lock it is
+                    // taken already.)
                     let helper = view.helper.borrow_mut().take();
                     if helper.is_some() {
                         view.ctx.toast("Locked again");

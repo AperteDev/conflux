@@ -10,10 +10,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::ipc::{Request, Response};
 
-/// How long the helper waits for a request before it exits, locking the GUI
-/// again.
-pub const IDLE_SECS: u64 = 5 * 60;
-
 /// A request to the helper.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum HelperRequest {

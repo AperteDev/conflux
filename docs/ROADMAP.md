@@ -52,8 +52,8 @@ the system scope.
   (`paths::validate_profile`, checked by `Paths::resolve`). `.` is allowed so host names work
   as profiles.
 - System unlock: one `pkexec` launch of a long-lived, minimal `conflux-helper` (newline-delimited
-  JSON over stdin/stdout). One polkit prompt per unlock; lock (button, idle timeout of 5 min,
-  window closed, GUI gone so stdin hits EOF) ends the helper.
+  JSON over stdin/stdout). One polkit prompt per unlock, which then lasts until Lock or until
+  the window closes (the GUI gone, so stdin hits EOF); no idle timeout.
 
 ### UI
 
@@ -193,8 +193,9 @@ order). Fixed commands:
 - No journal command after all: the system journal is readable by the admin groups (`wheel`,
   `adm`, `systemd-journal`) on the usual distributions, so View Log reads it directly, and a
   live stream would not fit the one-answer-per-request protocol.
-- It exits on stdin EOF (Lock, or the GUI gone) or after 5 min without a request; the GUI
-  notices and locks again ("Locked again").
+- It exits on stdin EOF: on Lock, or when the window closes or the GUI goes away. There is no
+  idle timeout: unlocked stays unlocked while the window is open. If it dies otherwise, the
+  GUI notices and locks again ("Locked again").
 - Started as `pkexec <helper>`: the helper next to the app when there is one (a build from
   source; pkexec's generic action), else `/usr/lib/conflux/conflux-helper`, which the polkit
   policy `data/dev.aperte.conflux.policy` (`dev.aperte.conflux.manage`, `auth_admin_keep`)
@@ -231,7 +232,7 @@ data/                   .desktop, metainfo, icons, polkit policy, gresource
    units goes through the user's own systemd manager, so it needs no privileges.
 5. [x] **System unlock:** helper and polkit policy, the lock banner (Unlock... / Lock) with
    every editing control bound to it, privileged writes, unit control and daemon requests,
-   state removal, automatic re-lock. The journal is read directly (see the helper).
+   state removal, locking again when the window closes. The journal is read directly (see the helper).
 6. [ ] **Packaging, Arch and tarballs:** the app's data (icon, replacing the stand-in in About;
    `.desktop` file; metainfo; polkit policy), the two packages split as in
    [Packages](#packages) in the PKGBUILD and the AUR, `install.sh --gtk`, a release tarball of

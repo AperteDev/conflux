@@ -1,6 +1,6 @@
 //! The privileged helper as the app sees it: started with `pkexec` on Unlock,
-//! asked one request at a time, and gone on Lock, after its idle timeout, or
-//! with the app (its stdin closes). See `conflux_core::helper`.
+//! asked one request at a time, and gone on Lock or with the window (its stdin
+//! closes). See `conflux_core::helper`.
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
