@@ -151,7 +151,7 @@ def gradient(name: str, box: tuple, stops: list) -> str:
     return "".join(out) + "</linearGradient>"
 
 
-def stamp(name: str, d: str, colors: tuple) -> tuple[list, list]:
+def stamp(name: str, d: str, colors: tuple, transform: str = "") -> tuple[list, list]:
     """Defs and layers of the shape d pressed into a surface lit from above: the wall under its
     top edges in shadow, the one over its bottom edges in light, the floor between them."""
     floor, shadow, light = colors
@@ -164,6 +164,8 @@ def stamp(name: str, d: str, colors: tuple) -> tuple[list, list]:
         f'<g clip-path="url(#{name}-up)"><path d="{d}" fill="{shadow}"/>',
         f'<path d="{d}" clip-path="url(#{name}-down)" fill="{floor}"/></g>',
     ]
+    if transform:
+        layers = [f'<g transform="{transform}">', *layers, "</g>"]
     return defs, layers
 
 
@@ -172,8 +174,11 @@ def icon() -> str:
     big, left, right = gears()
     back, front = folder(right["cx"], right["cy"] + 1, 8)
     stamps = [
-        stamp("sync", sync(big["cx"], big["cy"], 15.5, 5), STAMP["sync"]),
-        stamp("cloud", cloud(left["cx"] + 0.5, left["cy"] + 1, 9.5), STAMP["cloud"]),
+        # the lit wall at the bottom reads as the gear's face, so the sign would look wider than
+        # tall: stretch it by about that wall and lower it by half of it
+        stamp("sync", sync(0, 0, 15.5, 5), STAMP["sync"],
+              f"translate({num(big['cx'])} {num(big['cy'] + 0.6)}) scale(1 1.05)"),
+        stamp("cloud", cloud(left["cx"] - 2.5, left["cy"] + 1, 11), STAMP["cloud"]),
         stamp("folder", back, STAMP["folder"]),
     ]
     c = COLOR
@@ -198,10 +203,10 @@ def icon() -> str:
         d = gear(g["cx"], g["cy"], g["n"], g["ro"], g["rr"], g["phase"])
         lines.append(f'<path d="{d}" fill="url(#gear)"/>')
     lines += [
-        "</g>",
         *(line for _, layers in stamps for line in layers),
         # the folder's front flap, lying on the floor of its stamp
         f'<path d="{front}" clip-path="url(#folder-down)" fill="{STAMP["folder_front"]}"/>',
+        "</g>",
         "</svg>",
     ]
     return "\n".join(lines) + "\n"
