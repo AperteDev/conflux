@@ -1,0 +1,70 @@
+// Run conflux and its app straight from the workspace. Zed runs commands through the
+// user's shell (fish), not sh: keep them to what both understand.
+[
+  {
+    "label": "daemon: run",
+    // In the foreground, with your own config; Ctrl+C stops it.
+    "command": "cargo run --bin conflux -- daemon",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false,
+    "reveal": "always"
+  },
+  {
+    "label": "daemon: run with debug logs",
+    "command": "cargo run --bin conflux -- daemon",
+    "env": { "CONFLUX_LOG": "debug", "RUST_BACKTRACE": "1" },
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false,
+    "reveal": "always"
+  },
+  {
+    "label": "app: run",
+    // The helper too: Unlock runs it from next to the app.
+    "command": "cargo build -p conflux-helper && cargo run -p conflux-gtk",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false,
+    "reveal": "always"
+  },
+  {
+    "label": "app: run with debug logs",
+    "command": "cargo build -p conflux-helper && cargo run -p conflux-gtk",
+    "env": { "G_MESSAGES_DEBUG": "all", "RUST_BACKTRACE": "1" },
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false,
+    "reveal": "always"
+  },
+  {
+    "label": "app: run in nested shell",
+    // A headless GNOME Shell on its own bus, as dev.aperte.Conflux.Test so it runs next to an
+    // open copy; drive it with scripts/gui-drive.py. Ctrl+C stops it.
+    "command": "scripts/gui-shell.sh",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false,
+    "reveal": "always"
+  },
+  {
+    "label": "app: quit running instance",
+    // --auto-start=no so this never D-Bus-activates a copy just to quit it.
+    "command": "busctl --user --auto-start=no call dev.aperte.Conflux /dev/aperte/Conflux org.gtk.Actions Activate 'sava{sv}' quit 0 0 || true",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false,
+    "reveal": "no_focus",
+    "hide": "on_success"
+  },
+  {
+    "label": "check: fmt, clippy, test",
+    // What CI's check job runs.
+    "command": "cargo fmt --all --check && cargo clippy --workspace --all-targets --locked -- -D warnings && cargo test --workspace --locked",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false,
+    "reveal": "always"
+  },
+  {
+    "label": "release: run the Release workflow",
+    // gh asks for the version, then the workflow sets it, builds, tags and publishes.
+    "command": "gh workflow run release.yml",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false,
+    "reveal": "always"
+  }
+]
