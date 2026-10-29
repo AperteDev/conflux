@@ -27,9 +27,9 @@
     <name translate="no">Aperte</name>
   </developer>
   <launchable type="desktop-id">dev.aperte.Conflux.desktop</launchable>
-  <url type="homepage">https://github.com/SelfRef/conflux</url>
-  <url type="bugtracker">https://github.com/SelfRef/conflux/issues</url>
-  <url type="vcs-browser">https://github.com/SelfRef/conflux</url>
+  <url type="homepage">https://github.com/AperteDev/conflux</url>
+  <url type="bugtracker">https://github.com/AperteDev/conflux/issues</url>
+  <url type="vcs-browser">https://github.com/AperteDev/conflux</url>
   <url type="donation">https://github.com/sponsors/SelfRef</url>
   <branding>
     <color type="primary" scheme_preference="light">#c9e0d1</color>

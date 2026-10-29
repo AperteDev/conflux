@@ -82,7 +82,7 @@ Installed-Size: $(du -sk "$work/root" | cut -f1)
 Depends: $depends
 $extra
 Priority: optional
-Homepage: https://github.com/SelfRef/conflux
+Homepage: https://github.com/AperteDev/conflux
 Description: $description
 EOF
 

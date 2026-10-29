@@ -7,7 +7,7 @@
 <p align="center">A background sync daemon for Linux, with a GNOME app to set it up.</p>
 
 <p align="center">
-  <a href="https://github.com/SelfRef/conflux/actions/workflows/ci.yml"><img src="https://github.com/SelfRef/conflux/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/AperteDev/conflux/actions/workflows/ci.yml"><img src="https://github.com/AperteDev/conflux/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
 </p>
 
 conflux keeps local directories in step with a **WebDAV** server (Nextcloud and
@@ -63,7 +63,7 @@ install the prebuilt release instead, and `conflux-git` and `conflux-gtk-git`
 build the latest commit.
 
 **Other distributions:** download the packages from the
-[latest release](https://github.com/SelfRef/conflux/releases/latest):
+[latest release](https://github.com/AperteDev/conflux/releases/latest):
 
 ```sh
 # Ubuntu 26.04 and newer (conflux also for arm64)

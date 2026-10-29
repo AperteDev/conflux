@@ -7,7 +7,7 @@
      is where packages install the helper. -->
 <policyconfig>
   <vendor>Conflux</vendor>
-  <vendor_url>https://github.com/SelfRef/conflux</vendor_url>
+  <vendor_url>https://github.com/AperteDev/conflux</vendor_url>
   <icon_name>dev.aperte.Conflux</icon_name>
 
   <action id="dev.aperte.conflux.manage">

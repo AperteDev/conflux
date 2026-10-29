@@ -128,6 +128,6 @@ sync daemon and the CLI that controls it.
 - **Packaging** — Arch Linux `PKGBUILD` and a source install script
   (`install.sh`) for user and system installs.
 
-[Unreleased]: https://github.com/SelfRef/conflux/compare/v1.1.0...HEAD
-[1.1.0]: https://github.com/SelfRef/conflux/releases/tag/v1.1.0
-[1.0.0]: https://github.com/SelfRef/conflux/releases/tag/v1.0.0
+[Unreleased]: https://github.com/AperteDev/conflux/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/AperteDev/conflux/releases/tag/v1.1.0
+[1.0.0]: https://github.com/AperteDev/conflux/releases/tag/v1.0.0

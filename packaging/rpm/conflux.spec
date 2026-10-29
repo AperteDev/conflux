@@ -13,7 +13,7 @@ SourceLicense:  GPL-3.0-or-later
 # LICENSE.dependencies lists them by crate). Check it again when the
 # dependencies change.
 License:        GPL-3.0-or-later AND Apache-2.0 AND BSD-2-Clause AND BSD-3-Clause AND CC0-1.0 AND CDLA-Permissive-2.0 AND ISC AND MIT AND MPL-2.0 AND Unicode-3.0 AND (Apache-2.0 OR BSL-1.0) AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR MIT) AND (BSD-2-Clause OR Apache-2.0 OR MIT) AND (CC0-1.0 OR Apache-2.0 OR Apache-2.0 WITH LLVM-exception) AND (CC0-1.0 OR MIT-0 OR Apache-2.0) AND (MIT OR Apache-2.0 OR Zlib) AND (Unlicense OR MIT) AND (Zlib OR Apache-2.0 OR MIT)
-URL:            https://github.com/SelfRef/conflux
+URL:            https://github.com/AperteDev/conflux
 Source0:        %{url}/archive/v%{version}/%{name}-%{version}.tar.gz
 # cargo vendor --locked, as .copr/Makefile makes it.
 Source1:        %{name}-%{version}-vendor.tar.xz
