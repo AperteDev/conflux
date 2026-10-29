@@ -95,7 +95,8 @@ jobs:
       - name: Install the build dependencies
         run: >-
           dnf install -y --setopt=install_weak_deps=False
-          git gcc make python3 gtk4-devel libadwaita-devel blueprint-compiler glib2-devel
+          git gcc make python3 openssl-devel zlib-devel gtk4-devel libadwaita-devel
+          blueprint-compiler glib2-devel
       - uses: actions/checkout@v7
       - name: Set the release version
         if: env.VERSION != ''
