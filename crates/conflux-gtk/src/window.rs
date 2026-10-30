@@ -60,6 +60,10 @@ pub fn open(app: &adw::Application) {
     let b = builder!("window");
     let window: adw::ApplicationWindow = ui::get(&b, "window");
     window.set_application(Some(app));
+    // libadwaita's striped header bar marks a development build.
+    if cfg!(debug_assertions) {
+        window.add_css_class("devel");
+    }
     let ctx = Rc::new(Ctx {
         window: window.clone(),
         nav: ui::get(&b, "nav"),
