@@ -34,6 +34,15 @@
     "reveal": "always"
   },
   {
+    "label": "app: run in sandbox",
+    // A scratch daemon and config in target/sandbox, the app on your screen as
+    // dev.aperte.Conflux.Test. Ctrl+C or closing the app stops both.
+    "command": "scripts/sandbox.sh",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false,
+    "reveal": "always"
+  },
+  {
     "label": "app: run in nested shell",
     // A headless GNOME Shell on its own bus, as dev.aperte.Conflux.Test so it runs next to an
     // open copy; drive it with scripts/gui-drive.py. Ctrl+C stops it.
