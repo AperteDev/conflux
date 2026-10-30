@@ -2,9 +2,9 @@
   <img src="data/icons/hicolor/scalable/apps/dev.aperte.Conflux.svg" width="128" alt="Conflux icon">
 </p>
 
-<h1 align="center">conflux</h1>
+<h1 align="center">Conflux</h1>
 
-<p align="center">A background sync daemon for Linux, with a GNOME app to set it up.</p>
+<p align="center">File sync for Linux: a background daemon, a CLI to control it and a GNOME app to set it up.</p>
 
 <p align="center">
   <a href="https://github.com/AperteDev/conflux/actions/workflows/ci.yml"><img src="https://github.com/AperteDev/conflux/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
