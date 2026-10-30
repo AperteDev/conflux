@@ -35,9 +35,19 @@
   },
   {
     "label": "app: run in sandbox",
-    // A scratch daemon and config in target/sandbox, the app on your screen as
-    // dev.aperte.Conflux.Test. Ctrl+C or closing the app stops both.
+    // Scratch configs and daemons (user and system) in target/sandbox, the app on your screen
+    // as dev.aperte.Conflux.Test; it still sees your real systemd units. Ctrl+C or closing
+    // the app stops it all.
     "command": "scripts/sandbox.sh",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false,
+    "reveal": "always"
+  },
+  {
+    "label": "app: run in isolated sandbox",
+    // The same in bubblewrap: only target/sandbox writable, a private session bus and no
+    // system bus, so no systemd, logind or pkexec.
+    "command": "scripts/sandbox.sh --isolated",
     "use_new_terminal": false,
     "allow_concurrent_runs": false,
     "reveal": "always"

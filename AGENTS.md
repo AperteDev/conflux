@@ -89,6 +89,11 @@ Update these in the same commit as the change that affects them:
   with a scratch daemon's socket, `state/`) when starting `scripts/gui-shell.sh`. The helper
   honours the test root only when not root, and refuses units there. Never run the real
   `pkexec` path in tests.
+- `scripts/sandbox.sh [--isolated]` sets all of this up in `target/sandbox` (user and system
+  configs and daemons, the helper's test mode) and runs the app on the display in
+  `WAYLAND_DISPLAY`; `WAYLAND_DISPLAY=conflux-gui-shell` puts it in the nested shell.
+  `--isolated` runs it in bubblewrap, with only `target/sandbox` writable, a private session
+  bus and no system bus: systemd units, lingering and `pkexec` are out of its reach.
 - `scripts/gui-shell.sh` starts the app as `dev.aperte.Conflux.Test` (`--gapplication-app-id`),
   so a copy the user has open stays theirs; never kill a `conflux-gtk` without that id.
 - GTK's Broadway backend (`gtk4-broadwayd`, Playwright on `http://127.0.0.1:8087`) aborts as
