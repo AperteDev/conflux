@@ -33,7 +33,8 @@ fn main() -> glib::ExitCode {
         // Where the embedded icons are, also under a test copy's app id.
         .resource_base_path("/dev/aperte/Conflux")
         .build();
-    gtk::Window::set_default_icon_name(APP_ID);
+    // GTK is only initialized once the app starts up.
+    app.connect_startup(|_| gtk::Window::set_default_icon_name(APP_ID));
     app.connect_activate(|app| match app.active_window() {
         Some(window) => window.present(),
         None => window::open(app),
