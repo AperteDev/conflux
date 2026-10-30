@@ -7,9 +7,10 @@ Update these in the same commit as the change that affects them:
 - `docs/ROADMAP.md` holds the plans: decisions, steps in progress, later ideas. Read it before
   working on a feature. Tick a step when it is done, record a decision when one is made, and note
   why a plan was dropped.
-- `README.md` describes what users can do today: features, install, configuration, commands.
-  Update it with any user-visible change (a new option, command, backend, install path or
-  behaviour), along with `config.example.toml` for config options.
+- `README.md` gives an overview: what conflux offers in a few lines, install, getting started.
+  `docs/FEATURES.md` describes in detail what users can do today: features, examples, every
+  option, commands, the app. Update them with any user-visible change (a new option, command,
+  backend, install path or behaviour), along with `config.example.toml` for config options.
 - `docs/CHANGELOG.md`: add user-visible changes under `## [Unreleased]`. It follows
   [Keep a Changelog](https://keepachangelog.com/en/1.1.0/): `Added`, `Changed`, `Deprecated`,
   `Removed`, `Fixed`, `Security`; version links at the end.

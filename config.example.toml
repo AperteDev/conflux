@@ -13,7 +13,7 @@
 # file documents the defaults without changing them — uncomment only what you
 # want to override. You need at least one [[sync]] (and, unless it uses the
 # `remote_fs` shortcut or `git_repo`, one [[remote]]) for the daemon to do
-# anything. Ready-to-copy examples live in the README.
+# anything. Ready-to-copy examples live in docs/FEATURES.md.
 #
 # A [[sync]] does one of two jobs. Either it syncs FILES against a [[remote]] —
 # conflux compares the two trees and copies individual files, which is what most
@@ -176,7 +176,7 @@
 # # `max_file_size`) do not apply and are rejected — use `.gitignore` instead.
 # # What DOES apply: `id`, `label`, `trigger` (except "watch-both"), `interval`,
 # # `debounce`, `pull_interval`, `commit_msg_command`, `profiles`. A conflicting
-# # rebase is aborted and reported rather than resolved; see the README.
+# # rebase is aborted and reported rather than resolved; see docs/FEATURES.md.
 # git_repo = "~/notes"
 #
 # # Local root directory; leading `~` and $VARS are expanded. (required, unless

@@ -8,7 +8,7 @@
 //! - `finalize` stages everything (including deletions), commits, and pushes.
 //!
 //! git stores no per-file mtime, so newer-wins uses the **HEAD commit time** as
-//! the mtime for every remote file — an approximation documented in the README.
+//! the mtime for every remote file — an approximation documented in docs/FEATURES.md.
 
 use super::{walk_snapshot, Backend, RemoteSnapshot};
 use crate::config::{Remote, Sync};
