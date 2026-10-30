@@ -23,8 +23,10 @@ Update these in the same commit as the change that affects them:
   `[Unreleased]` changes and link under it, and adds the release with those notes to the
   app's metainfo. CI then checks and builds the packages with that version; if that passes,
   the workflow commits `chore(release): X`, tags `vX`, and publishes the GitHub release with
-  the changelog section as notes, the packages and `SHA256SUMS`. Don't bump versions or edit
-  the release sections by hand.
+  the changelog section as notes, the packages and `SHA256SUMS`. Then `scripts/aur.sh` moves
+  the AUR packages `conflux` and `conflux-bin` to the release, pushed by the AURomatic account
+  (a co-maintainer; the AperteDev secret `AUR_SSH_KEY`) as commits by SelfRef. Don't bump
+  versions or edit the release sections by hand.
 - Two packages, in every format: `conflux` (daemon and CLI) and `conflux-gtk` (the app and its
   helper). Each is installed into a tree by the root `Makefile` (`install-cli`, `install-gtk`;
   `install-flatpak` for the app alone), and every package is made from those trees: the
@@ -33,7 +35,9 @@ Update these in the same commit as the change that affects them:
   file goes into the `Makefile`, the spec's `%files` and, if it needs care, `scripts/deb.sh`.
 - The AUR packages (`conflux`, `conflux-bin`, `conflux-git`, and the app's) live on the AUR,
   not here. The CLI tarball's name and layout (`conflux-vX-<arch>-linux.tar.gz`, one top-level
-  directory with `usr/` and `etc/`) are what `conflux-bin` uses: keep them stable.
+  directory with `usr/` and `etc/`) are what `conflux-bin` uses: keep them stable. A change to
+  what `install-cli` installs or to the build needs the same in `conflux` and `conflux-git` by
+  hand, as the release only moves their version.
 - The metainfo (`data/dev.aperte.Conflux.metainfo.xml`) must pass `appstreamcli validate`, and
   the desktop file `desktop-file-validate`; CI checks both.
 - The spec's `License:` lists the licenses of the crates linked into the binaries; check it

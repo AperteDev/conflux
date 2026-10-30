@@ -240,7 +240,8 @@ data/                   .desktop, metainfo, icons, polkit policy, gresource
    `scripts/app_icon.py`: three meshed metal gears in the well of a metal plate, a sync sign
    stamped into the big one, a cloud and a folder on the small ones); the app also embeds
    them, for About in a build from source. The in-repo `PKGBUILD` is gone: the AUR packages
-   are kept on the AUR.
+   are kept on the AUR, and the Release workflow moves `conflux` and `conflux-bin` to each
+   release (`scripts/aur.sh`).
 7. [x] **Debian and Ubuntu:** `.deb` packages of both, see [Packages](#packages).
 8. [x] **Fedora COPR:** an RPM spec with both packages; CI builds it as COPR does. Left to do
    outside the repo: the COPR project, building from `.copr/Makefile` on each release tag.
