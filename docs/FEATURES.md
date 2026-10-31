@@ -284,9 +284,10 @@ are limited to 1-64 ASCII letters, digits, `_`, `-` and `.`, not starting with `
 or `-`.
 
 **The daemon syncs every active group once at startup**, whatever its `trigger` —
-`manual` only disables *automatic* triggers after that first run. Starting or
-reloading the daemon therefore syncs for real immediately; there is no "start
-paused" mode.
+`manual` only disables *automatic* triggers after that first run. Starting the
+daemon therefore syncs for real immediately; there is no "start paused" mode.
+Reloading does not sync: a group added by a reload first runs when its trigger
+fires, or on `conflux sync`.
 
 The CLI talks to the running daemon over its control socket; add `--system` for a
 system daemon and `--profile <name>` to target one profile. `man conflux`
