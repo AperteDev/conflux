@@ -29,6 +29,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   as a subpackage, built on COPR. A `Makefile` installs either package's files.
 - The system daemon's `conflux` user comes with the packages, from
   `/usr/lib/sysusers.d/conflux.conf`.
+- Man pages: `conflux(1)` for the daemon and its commands, `conflux(5)` for the config file.
+  The packages and `install.sh` install them.
 
 ### Changed
 

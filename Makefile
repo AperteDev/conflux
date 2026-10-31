@@ -11,6 +11,7 @@ PREFIX ?= /usr
 BINDIR ?= $(PREFIX)/bin
 LIBDIR ?= $(PREFIX)/lib
 DATADIR ?= $(PREFIX)/share
+MANDIR ?= $(DATADIR)/man
 SYSCONFDIR ?= /etc
 BUILD ?= target/release
 HELPER = $(LIBDIR)/conflux/conflux-helper
@@ -23,10 +24,12 @@ build-cli:
 build-gtk:
 	CONFLUX_HELPER_PATH=$(HELPER) cargo build --release --locked -p conflux-gtk -p conflux-helper
 
-# The daemon and CLI, its units (pointed at BINDIR), the system user and the
-# starter config.
+# The daemon and CLI, its man pages, its units (pointed at BINDIR), the system
+# user and the starter config.
 install-cli:
 	install -Dm755 $(BUILD)/conflux $(DESTDIR)$(BINDIR)/conflux
+	install -Dm644 man/conflux.1 $(DESTDIR)$(MANDIR)/man1/conflux.1
+	install -Dm644 man/conflux.5 $(DESTDIR)$(MANDIR)/man5/conflux.5
 	for unit in conflux conflux@; do \
 	  sed 's|/usr/bin/conflux|$(BINDIR)/conflux|' systemd/$$unit.user.service | \
 	    install -Dm644 /dev/stdin $(DESTDIR)$(LIBDIR)/systemd/user/$$unit.service; \

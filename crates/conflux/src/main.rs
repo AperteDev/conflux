@@ -201,3 +201,49 @@ fn run_config(action: &ConfigCmd, paths: &Paths) -> anyhow::Result<()> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    /// Commands and options of `cmd` (named `path`) and of its subcommands that
+    /// `page` does not describe: a command needs a `.B`/`.BR` line of its own,
+    /// an option its `\-\-long` and `\-s` spelling anywhere.
+    fn undocumented(page: &str, cmd: &clap::Command, path: &str) -> Vec<String> {
+        let mut missing = Vec::new();
+        let leaf = !cmd.has_subcommands();
+        let named = [format!("\n.B {path}\n"), format!("\n.BR {path} ")];
+        if leaf && !named.iter().any(|line| page.contains(line)) {
+            missing.push(path.to_string());
+        }
+        for arg in cmd.get_arguments() {
+            let long = arg
+                .get_long()
+                .map(|l| format!("\\-\\-{}", l.replace('-', "\\-")));
+            let short = arg.get_short().map(|s| format!("\\-{s}"));
+            for spelling in long.into_iter().chain(short) {
+                if !page.contains(&spelling) {
+                    missing.push(format!("{path} {spelling}"));
+                }
+            }
+        }
+        for sub in cmd.get_subcommands() {
+            let sub_path = if path.is_empty() {
+                sub.get_name().to_string()
+            } else {
+                format!("{path} {}", sub.get_name())
+            };
+            missing.extend(undocumented(page, sub, &sub_path));
+        }
+        missing
+    }
+
+    /// `man/conflux.1` names every command and option of the CLI.
+    #[test]
+    fn man_page_covers_the_cli() {
+        let page = include_str!("../../../man/conflux.1");
+        let missing = undocumented(page, &Cli::command(), "");
+        assert!(missing.is_empty(), "not in man/conflux.1: {missing:?}");
+    }
+}

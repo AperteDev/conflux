@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # install.sh — build conflux from source and install (or remove) the binary,
-# a starter config, and the systemd unit files.
+# its man pages, a starter config, and the systemd unit files.
 #
 # Usage:
 #   ./install.sh install   [--system] [--no-build]
@@ -30,7 +30,7 @@ die()  { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 usage() {
     cat <<'EOF'
 install.sh — build conflux from source and install (or remove) the binary,
-a starter config, and the systemd unit files.
+its man pages, a starter config, and the systemd unit files.
 
 Usage:
   ./install.sh install   [--system] [--no-build]
@@ -84,6 +84,7 @@ done
 if [ "$SYSTEM" -eq 1 ]; then
     [ "$(id -u)" -eq 0 ] || die "--system requires root; re-run with sudo"
     BINDIR="/usr/local/bin"
+    MANDIR="/usr/local/share/man"
     UNITDIR="/etc/systemd/system"
     CONFIG_DIR="/etc/conflux"
     STATE_DIR="/var/lib/conflux"
@@ -93,6 +94,7 @@ if [ "$SYSTEM" -eq 1 ]; then
     SERVICE_USER="conflux"
 else
     BINDIR="$HOME/.local/bin"
+    MANDIR="${XDG_DATA_HOME:-$HOME/.local/share}/man"
     UNITDIR="$HOME/.config/systemd/user"
     CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/conflux"
     STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/conflux"
@@ -131,6 +133,10 @@ do_install() {
 
     info "Installing binary → $BIN"
     install -Dm755 "$src" "$BIN"
+
+    info "Installing man pages → $MANDIR"
+    install -Dm644 "$SCRIPT_DIR/man/conflux.1" "$MANDIR/man1/conflux.1"
+    install -Dm644 "$SCRIPT_DIR/man/conflux.5" "$MANDIR/man5/conflux.5"
 
     # Create the service user before installing system config/units.
     if [ -n "$SERVICE_USER" ] && ! id "$SERVICE_USER" >/dev/null 2>&1; then
@@ -204,6 +210,9 @@ do_uninstall() {
 
     info "Removing binary → $BIN"
     rm -f "$BIN"
+
+    info "Removing man pages → $MANDIR"
+    rm -f "$MANDIR/man1/conflux.1" "$MANDIR/man5/conflux.5"
 
     if [ "$PURGE" -eq 1 ]; then
         info "Purging config → $CONFIG_DIR"

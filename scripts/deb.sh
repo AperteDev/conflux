@@ -16,6 +16,10 @@ trap 'rm -rf "$work"' EXIT
 cp -a "$stage" "$work/root"
 mkdir -p "$work/root/DEBIAN" "$work/root/usr/share/doc/$package"
 cp "$(dirname "$0")/../LICENSE" "$work/root/usr/share/doc/$package/copyright"
+# Debian ships man pages compressed.
+if [ -d "$work/root/usr/share/man" ]; then
+  find "$work/root/usr/share/man" -type f -exec gzip -9n {} +
+fi
 
 # dpkg-shlibdeps reads a source package's control file from the current directory.
 mkdir -p "$work/src/debian"

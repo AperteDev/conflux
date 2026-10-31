@@ -44,7 +44,8 @@ support its development:
   of the system.
 
 All of what conflux does, with examples and every option, is described in
-[FEATURES.md](docs/FEATURES.md).
+[FEATURES.md](docs/FEATURES.md). Once installed, `man conflux` describes the
+commands and `man 5 conflux` the config file.
 
 ## Install
 
@@ -87,13 +88,13 @@ Fedora RPMs are built from [`packaging/rpm/conflux.spec`](packaging/rpm/conflux.
 ### From source
 
 `./install.sh install` builds and installs the daemon and CLI into your home
-directory: the binary in `~/.local/bin`, `config.example.toml` as your starter
-config in `~/.config/conflux/`, and systemd **user** units. Add `--no-build` to
-reuse an existing `target/release/conflux`.
+directory: the binary in `~/.local/bin`, its man pages in `~/.local/share/man`,
+`config.example.toml` as your starter config in `~/.config/conflux/`, and systemd
+**user** units. Add `--no-build` to reuse an existing `target/release/conflux`.
 
 Add `--system` (as root) to install system-wide instead — binary in
-`/usr/local/bin`, config in `/etc/conflux/`, systemd **system** units, running as a
-dedicated `conflux` user:
+`/usr/local/bin`, man pages in `/usr/local/share/man`, config in `/etc/conflux/`,
+systemd **system** units, running as a dedicated `conflux` user:
 
 ```sh
 ./install.sh install                 # user install
@@ -160,7 +161,7 @@ sudo systemctl enable --now conflux              # the system
 > group at real data only once you are sure of it.
 
 `conflux status` shows each sync and its last run, `conflux sync` runs them now
-and `conflux sync -n` shows what a sync would change; see
+and `conflux sync -n` shows what a sync would change; see `man conflux` or
 [FEATURES.md](docs/FEATURES.md#daemon-and-cli) for the rest.
 
 ## Roadmap

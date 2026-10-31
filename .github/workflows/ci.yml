@@ -30,7 +30,7 @@ jobs:
         run: >-
           dnf install -y --setopt=install_weak_deps=False
           git gcc openssl-devel zlib-devel gtk4-devel libadwaita-devel blueprint-compiler
-          desktop-file-utils appstream
+          desktop-file-utils appstream groff-base
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -41,6 +41,12 @@ jobs:
       - run: cargo test --workspace --locked
       - run: desktop-file-validate data/dev.aperte.Conflux.desktop
       - run: appstreamcli validate --no-net data/dev.aperte.Conflux.metainfo.xml
+      - name: Check the man pages
+        run: |
+          for page in man/*.[0-9]; do
+            out=$(groff -man -Tutf8 -ww -z "$page" 2>&1)
+            [ -z "$out" ] || { echo "$page: $out"; exit 1; }
+          done
 
   cli-tarball:
     name: CLI tarball (${{ matrix.arch }})

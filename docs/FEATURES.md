@@ -35,7 +35,8 @@ in system mode. `$CONFLUX_CONFIG` or `--config <path>` overrides it, and
 `conflux config paths` prints the resolved config, state, and socket locations.
 [`config.example.toml`](../config.example.toml) documents every option at its
 default value; the tables in [Option reference](#option-reference) below are the
-summary.
+summary, and the `conflux(5)` man page (`man 5 conflux`) has the same reference
+at hand in a terminal.
 
 ### Examples
 
@@ -288,7 +289,8 @@ reloading the daemon therefore syncs for real immediately; there is no "start
 paused" mode.
 
 The CLI talks to the running daemon over its control socket; add `--system` for a
-system daemon and `--profile <name>` to target one profile.
+system daemon and `--profile <name>` to target one profile. `man conflux`
+describes every command and option.
 
 ```sh
 conflux status              # each group, its trigger, and its last run or error

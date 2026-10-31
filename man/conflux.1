@@ -1,0 +1,348 @@
+.\" conflux(1): the daemon and its CLI. The config file is in conflux(5).
+.\" Keep in step with the CLI (crates/conflux/src/main.rs); a test checks that
+.\" every command and option is named here.
+.TH CONFLUX 1 "" "conflux" "User Commands"
+.SH NAME
+conflux \- background file-sync daemon and its control commands
+.SH SYNOPSIS
+.SY conflux
+.RB [ \-\-system ]
+.RB [ \-c
+.IR path ]
+.RB [ \-p
+.IR name ]
+.B daemon
+.YS
+.SY conflux
+.RI [ options ]
+.B status
+.YS
+.SY conflux
+.RI [ options ]
+.B sync
+.RB [ \-n ]
+.RI [ group ]
+.YS
+.SY conflux
+.RI [ options ]
+.B reload
+.YS
+.SY conflux
+.RI [ options ]
+.B config
+.BR validate | show | paths
+.YS
+.SH DESCRIPTION
+.B conflux
+keeps local directories in step with a WebDAV server, a git repository or
+another directory, or keeps a git clone up to date through git itself.
+What to sync and when is written in a TOML file, described in
+.BR conflux (5).
+.PP
+One binary is both the daemon and the commands that control it.
+.B conflux daemon
+runs the syncs of one profile in the foreground; it is usually started by its
+systemd unit (see
+.BR UNITS ).
+The other commands talk to a running daemon over its control socket, except
+.BR config ,
+which reads the file itself.
+.PP
+Each sync group runs on its trigger: on local changes, on a timer, or only when
+asked, and optionally also polls the remote for changes.
+Deletions are not propagated unless a group allows them, files above a size
+limit are skipped, and when a file changed on both sides the newer one is kept
+in place and the other as a conflict copy next to it (see
+.BR conflux (5)).
+.SS Scopes
+A daemon runs in one of two scopes:
+.TP
+.B user
+The default for a user other than root.
+The config, the state and the socket are under
+.BR $XDG_CONFIG_HOME ,
+.B $XDG_STATE_HOME
+and
+.B $XDG_RUNTIME_DIR
+(see
+.BR FILES ).
+.TP
+.B system
+With
+.BR \-\-system ,
+or always when run as root.
+The config, the state and the socket are under
+.IR /etc ,
+.I /var/lib
+and
+.IR /run .
+The system daemon runs as the
+.B conflux
+user.
+.SS Profiles
+A profile selects which daemon a command targets, and which sync groups that
+daemon runs: those whose
+.B profiles
+list names it, and for the
+.B default
+profile also those without a
+.B profiles
+list.
+So one shared config file can drive different hosts, or several daemons on one
+host, each with its own state directory and control socket.
+Profile names are 1 to 64 ASCII letters, digits,
+.BR _ ,
+.B \-
+and
+.BR . ,
+not starting with
+.B .\&
+or
+.BR \- .
+.SH OPTIONS
+These options can be given before or after the command.
+.TP
+.B \-\-system
+Use the system scope: its config file, state directory and socket.
+.TP
+.BR \-c ", " \-\-config " \fIpath\fR"
+Read this config file instead of the scope's.
+Overrides
+.BR CONFLUX_CONFIG .
+.TP
+.BR \-p ", " \-\-profile " \fIname\fR"
+Target the daemon of this profile, or for
+.BR daemon ,
+run it.
+Defaults to
+.BR default ,
+or for
+.B daemon
+to the config's
+.B [daemon] profile
+setting.
+.TP
+.BR \-h ", " \-\-help
+Print help, for
+.B conflux
+or for the command it follows.
+.TP
+.BR \-V ", " \-\-version
+Print the version.
+.SH COMMANDS
+.TP
+.B daemon
+Run the daemon in the foreground, logging to standard error, until it gets
+.B SIGTERM
+or
+.BR SIGINT .
+It syncs every group of its profile once at startup, whatever the group's
+trigger, then runs each one on its trigger.
+A config with errors is refused: the daemon does not start.
+.TP
+.B status
+Show each sync group of the daemon: its label, trigger and local root, and its
+last run with a summary or the error.
+.TP
+.BR sync " [" \-n "] [\fIgroup\fR]"
+Sync now and wait for the result.
+.I group
+is a sync's
+.B id
+or its label, as
+.B status
+shows it:
+.IB remote : remote_path\fR,
+the remote alone without a
+.BR remote_path ,
+or for a
+.B git_repo
+group the name of its directory.
+Without it, every group of the profile syncs.
+.RS
+.TP
+.BR \-n ", " \-\-dry\-run
+Show what the sync would change, changing nothing.
+The daemon fetches the remote's state to compare against but writes, deletes
+and pushes nothing.
+Each line is a path with what would happen to it:
+.B \[u2191]
+upload,
+.B \[u2193]
+download,
+.B \[u2717]
+delete,
+.B !
+conflict (with the copy that would win),
+.B \[u00B7]
+skip.
+Conflicts are predicted from modification times, so a file that turns out to be
+identical on both sides may show as one.
+.IP
+A dry run previews the next sync of a running daemon, that is the changes made
+since its last one; it cannot preview a group the daemon has not run yet, as it
+syncs every group at startup.
+.RE
+.TP
+.B reload
+Have the daemon read its config file again, without restarting.
+A config with errors is refused, and the daemon keeps the one it has.
+.TP
+.B config validate
+Check the config file as the daemon would, then print warnings for settings
+that are accepted but probably not what was meant.
+.TP
+.B config show
+Print the config as the daemon reads it, with every default filled in.
+.TP
+.B config paths
+Print the config file, state directory and control socket that the scope and
+profile resolve to.
+.SH PERMISSIONS
+A user daemon's socket is in the user's own runtime directory.
+A system daemon's socket is open to every local user, who can read its
+.BR status ,
+as the config it describes is readable by everyone.
+.BR sync ,
+.B sync \-n
+and
+.B reload
+of a system daemon need root, the
+.B conflux
+user, or membership in the
+.B conflux
+group.
+.SH SIGNALS
+.TP
+.B SIGHUP
+Reload the config, as
+.B conflux reload
+does.
+.TP
+.BR SIGTERM ", " SIGINT
+Stop the daemon.
+.SH UNITS
+The packages install systemd units for both scopes:
+.B conflux.service
+runs the
+.B default
+profile and
+.BI conflux@ profile .service
+any other.
+User daemons are managed with
+.BR "systemctl \-\-user" ,
+system daemons with
+.BR systemctl ;
+.B journalctl
+shows their logs.
+.SH ENVIRONMENT
+The daemon passes its environment on to the commands it runs, such as
+.B password_command
+and
+.BR commit_msg_command .
+.TP
+.B CONFLUX_CONFIG
+The config file, in place of the scope's.
+.TP
+.B CONFLUX_LOG
+What to log: a level
+.RB ( error ,
+.BR warn ,
+.BR info ,
+.BR debug ,
+.BR trace )
+or a tracing filter such as
+.BR info,conflux_core=debug .
+Overrides the config's
+.BR log_level .
+Defaults to
+.BR info .
+.TP
+.B XDG_CONFIG_HOME
+The user config's directory, by default
+.IR \(ti/.config .
+.TP
+.B XDG_STATE_HOME
+The user state's directory, by default
+.IR \(ti/.local/state .
+.TP
+.B XDG_RUNTIME_DIR
+Holds the user daemons' sockets in its
+.I conflux
+directory; without it they are in the state directory.
+.SH FILES
+.TP
+.I \(ti/.config/conflux/config.toml
+The user config.
+.TP
+.I /etc/conflux/config.toml
+The system config.
+.TP
+.IR \(ti/.local/state/conflux/ ", " /var/lib/conflux/
+State: the index of each sync group, and the clones of
+.B git
+remotes.
+A profile other than
+.B default
+has a directory of the profile's name in it.
+.TP
+.IR $XDG_RUNTIME_DIR/conflux/conflux.sock ", " /run/conflux/conflux.sock
+The control socket of the
+.B default
+profile's daemon;
+.BI conflux\- profile .sock
+for any other.
+.SH EXIT STATUS
+.B 0
+on success,
+.B 1
+when the command or any sync group it ran failed,
+.B 2
+for invalid usage.
+.SH EXAMPLES
+Start the user daemon, now and at every login:
+.PP
+.RS
+.EX
+systemctl \-\-user enable \-\-now conflux
+.EE
+.RE
+.PP
+See what a sync of the group
+.B dotfiles
+would change, then run it:
+.PP
+.RS
+.EX
+conflux sync \-n dotfiles
+conflux sync dotfiles
+.EE
+.RE
+.PP
+Show the status of the system daemon of the profile
+.BR backup :
+.PP
+.RS
+.EX
+conflux \-\-system \-p backup status
+.EE
+.RE
+.PP
+Try a config in the foreground, with debug logs, before installing it:
+.PP
+.RS
+.EX
+CONFLUX_LOG=debug conflux \-c /tmp/try.toml daemon
+.EE
+.RE
+.SH SEE ALSO
+.BR conflux (5),
+.BR systemctl (1),
+.BR journalctl (1),
+.BR git (1)
+.PP
+The project, with more documentation and Conflux, a GNOME app for the same
+config and daemons:
+.br
+.UR https://github.com/AperteDev/conflux
+.UE

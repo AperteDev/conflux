@@ -1,0 +1,567 @@
+.\" conflux(5): the config file. config.example.toml documents every option at
+.\" its default and docs/FEATURES.md has longer examples; keep the three in step.
+.TH CONFLUX 5 "" "conflux" "File Formats"
+.SH NAME
+conflux \- configuration of the conflux sync daemon
+.SH SYNOPSIS
+.I \(ti/.config/conflux/config.toml
+.br
+.I /etc/conflux/config.toml
+.SH DESCRIPTION
+.BR conflux (1)
+reads one TOML file:
+.TP
+.I $XDG_CONFIG_HOME/conflux/config.toml
+in the user scope,
+.I \(ti/.config/conflux/config.toml
+unless
+.B \%XDG_CONFIG_HOME
+is set;
+.TP
+.I /etc/conflux/config.toml
+in the system scope.
+.PP
+.B \-\-config
+or
+.B CONFLUX_CONFIG
+name another.
+.PP
+The file has an optional
+.B [daemon]
+table with daemon-wide settings and the defaults every sync inherits, any number
+of
+.B [[remote]]
+tables, each a place to sync with, and one
+.B [[sync]]
+table per sync group: a local directory and the rules for keeping it in step.
+.PP
+A sync group does one of two jobs.
+Either it syncs files against a remote, comparing the two trees and copying
+single files, which is what most options are about; or it sets
+.B git_repo
+to keep a git clone up to date through git itself (see
+.BR "GIT CLONES" ).
+.PP
+The daemon refuses a file with errors, and
+.B conflux config validate
+checks one as the daemon would.
+The app, Conflux, edits the same file in place, keeping its comments and
+layout.
+.SH VALUES
+.TP
+.I duration
+A string such as
+.BR \(dq500ms\(dq ,
+.BR \(dq2s\(dq ,
+.BR \(dq3m\(dq ,
+.BR \(dq1h\(dq ;
+.B \(dq0s\(dq
+turns the setting off.
+.TP
+.I size
+A number of bytes, or a string with a unit:
+.BR KB ,
+.BR MB ,
+.BR GB ,
+.B TB
+(powers of 1000) or
+.BR KiB ,
+.BR MiB ,
+.B GiB
+(powers of 1024), such as
+.BR \(dq100MB\(dq .
+.B 0
+means no limit.
+.TP
+.I path
+A leading
+.B \(ti
+and
+.BI $ VARIABLES
+are expanded.
+In the system scope
+.B \(ti
+is the home of the
+.B conflux
+user, so write paths there in full.
+.TP
+.I glob
+Relative to the group's local directory.
+.B *
+matches within one path segment,
+.B **
+across segments, and a plain name matches its whole subtree.
+.TP
+.I command
+Run with
+.BR "sh \-c" ,
+in the daemon's environment; its standard output is the value, without the
+trailing newline.
+.SH [daemon]
+.TP
+.B log_level
+What the daemon logs:
+.BR error ,
+.BR warn ,
+.BR info ,
+.B debug
+or
+.BR trace .
+.B CONFLUX_LOG
+overrides it.
+Default
+.BR info .
+.TP
+.B profile
+The profile the daemon runs, unless
+.B \-\-profile
+names one.
+Default
+.BR default .
+.PP
+The rest are defaults, which a sync's own setting overrides; for
+.B pull_interval
+and
+.B max_file_size
+a remote's setting comes in between.
+.TP
+.B debounce
+.RI ( duration )
+How long a
+.B watch
+trigger waits for changes to settle before syncing.
+Default
+.BR 5s .
+.TP
+.B interval
+.RI ( duration )
+How often a
+.B timer
+trigger syncs.
+Default
+.BR 1h .
+.TP
+.B pull_interval
+.RI ( duration )
+How often to run an extra pull-only sync, which brings in changes made on the
+remote side, whatever the trigger.
+Default: every
+.B 5m
+for anything git (a
+.B git
+remote or a
+.B git_repo
+clone), as neither can be watched; off for the rest.
+.TP
+.B empty_dirs
+.B ignore
+leaves empty directories alone,
+.B prune
+removes them from both sides after a sync,
+.B mirror
+creates and removes them on both sides.
+Has no effect with git, which cannot store them.
+Default
+.BR ignore .
+.TP
+.B deletions
+.B deny
+never deletes a file on either side, whatever the scope: a file removed on one
+side stays on the other.
+.B allow
+removes it on the other side too.
+Default
+.BR deny .
+.TP
+.B max_file_size
+.RI ( size )
+Larger files are skipped, in both directions.
+Default
+.BR 100MB .
+.TP
+.B exclude
+.RI ( globs )
+Never synced, in any group: added to each group's own
+.BR exclude .
+By default the clutter of version control and file managers, anywhere in the
+tree:
+.RS
+.IP
+.EX
+["**/.git/**", "**/.svn/**", "**/.hg/**",
+ "**/.DS_Store", "**/Thumbs.db", "**/*.swp"]
+.EE
+.RE
+.IP
+.B []
+syncs them all.
+Conflict copies are always excluded.
+.SH [[remote]]
+.TP
+.B id
+Its name, which a sync's
+.B remote
+refers to.
+Required.
+.TP
+.B backend
+.BR webdav ,
+.B git
+or
+.BR filesystem .
+Required.
+.TP
+.B url
+Where it is: a WebDAV base URL, a git repository URL
+.RB ( https:// ,
+.B ssh://
+or
+.IB user @ host : path\fR),
+or for
+.B filesystem
+a directory
+.RI ( path ).
+Required.
+.TP
+.B label
+A description, shown by the app.
+.TP
+.BR username ", " password ", " password_command
+Credentials for WebDAV and for git over HTTPS.
+.B password_command
+.RI ( command )
+keeps the password out of the file, such as
+.BR "secret\-tool lookup service conflux" .
+.TP
+.B identity_file
+.RI ( path )
+The private key for git over SSH.
+.TP
+.B identity_file_command
+.RI ( command )
+Prints the private key for git over SSH, so it needs no file.
+.TP
+.B branch
+The git branch to sync with.
+Default: the repository's default branch.
+.TP
+.B commit_msg_command
+.RI ( command )
+Prints the message of the commits made to a git remote; it runs in conflux's
+clone, so it can look at what is staged.
+Default:
+.BI "conflux sync from " hostname\fR.
+.TP
+.BR pull_interval ", " max_file_size
+Override the
+.B [daemon]
+defaults for this remote's groups.
+.SH [[sync]]
+.SS Identity
+.TP
+.B id
+A name for the group, which
+.B conflux sync
+takes; unique among the syncs.
+.TP
+.B label
+A description, shown by the app.
+.SS Mapping
+Set exactly one of
+.BR remote ,
+.B remote_fs
+and
+.BR git_repo .
+.TP
+.B remote
+The
+.B id
+of a
+.BR [[remote]] .
+.TP
+.B remote_fs
+.RI ( path )
+A directory to sync with, for which conflux makes the
+.B filesystem
+remote itself: no
+.B [[remote]]
+needed.
+.TP
+.B git_repo
+.RI ( path )
+A git clone to keep up to date through git, which is also the group's local
+directory (see
+.BR "GIT CLONES" ).
+.TP
+.B local
+.RI ( path )
+The local directory.
+Required, unless
+.B git_repo
+gives it.
+.TP
+.B remote_path
+The directory of the remote that
+.B local
+corresponds to.
+Default: the remote's root.
+.SS What is synced
+.TP
+.B include
+.RI ( globs )
+What the group syncs, both ways.
+Default
+.BR [] ,
+which matches nothing;
+.B [\(dq**\(dq]
+matches everything.
+.TP
+.B scope
+What happens to the paths outside
+.BR include :
+.RS
+.TP
+.B include
+Nothing: they are never pushed, pulled or deleted.
+So a remote pointed at the home directory cannot touch files not listed.
+The default.
+.TP
+.B remote
+Pulled down from the remote, which wins over local changes (a local copy that
+differed is kept as a conflict copy).
+Good for dotfiles.
+.TP
+.B local
+Pushed up, the local copy winning.
+.TP
+.B mirror
+The whole tree syncs both ways, and
+.B include
+is ignored.
+With
+.B deletions
+allowed, a deletion on one side, or an empty remote, can remove every file on
+the other: use it only for a directory meant to be a mirror.
+.RE
+.TP
+.B exclude
+.RI ( globs )
+Never synced, in addition to the
+.B [daemon]
+list.
+.TP
+.B deletions
+As in
+.BR [daemon] .
+.TP
+.BR empty_dirs ", " max_file_size
+As in
+.BR [daemon] .
+.SS When it syncs
+.TP
+.B trigger
+.B watch
+syncs on local changes, after
+.BR debounce ;
+.B watch\-both
+also watches the remote, which must be a directory
+.RB ( filesystem
+or
+.BR remote_fs );
+.B timer
+syncs every
+.BR interval ;
+.B manual
+only on
+.BR "conflux sync" .
+Default
+.BR watch .
+Whatever the trigger, the daemon syncs every group once when it starts.
+.TP
+.BR debounce ", " interval ", " pull_interval
+As in
+.BR [daemon] .
+.SS Other
+.TP
+.B profiles
+The profiles whose daemons run this group.
+Without it the group is in the
+.B default
+profile only; a list is taken as written, so
+.B []
+puts the group in none.
+.TP
+.B commit_msg_command
+.RI ( command )
+For a
+.B git_repo
+group: prints the message of its commits.
+Default:
+.BI "conflux sync from " hostname\fR.
+.SH CONFLICTS
+When a file changed on both sides since the last sync, the newer one stays in
+place and the other is kept next to it as a conflict copy, named like
+.PP
+.RS
+.EX
+report.conflux\-conflict\-2026\-10\-31_14\-05\-09.pdf
+.EE
+.RE
+.PP
+Conflict copies are never synced.
+A git remote stores no time per file, so its files count as changed when the
+branch was last committed to.
+.SH GIT CLONES
+A
+.B git_repo
+group keeps a clone that already exists up to date with git: on every sync it
+commits the changes in the working tree, fetches, fast-forwards or rebases its
+own commits onto the upstream branch, and pushes.
+The branch, its upstream and the credentials are the clone's own,
+.I .gitignore
+decides what is tracked, and the commits are authored with the clone's
+.B user.name
+and
+.BR user.email .
+.PP
+Work in progress is committed, starting with the sync at the daemon's startup.
+When the rebase conflicts it is aborted and reported: the local commits stay,
+nothing is pushed, and
+.B git pull \-\-rebase
+resolves it by hand.
+History is otherwise never rewritten.
+A clone that is missing, has a detached HEAD or a branch without upstream, or is
+in the middle of a merge or rebase is refused until fixed.
+.PP
+Only
+.BR id ,
+.BR label ,
+.BR trigger
+(but not
+.BR watch\-both ),
+.BR interval ,
+.BR debounce ,
+.BR pull_interval ,
+.B commit_msg_command
+and
+.B profiles
+apply; the file-level options
+.RB ( remote_path ,
+.BR include ,
+.BR scope ,
+.BR deletions ,
+.BR empty_dirs ,
+.BR max_file_size )
+are refused.
+.SH GIT AUTHENTICATION
+A
+.B git_repo
+clone authenticates as
+.BR git (1)
+would.
+A
+.B git
+remote over SSH tries, in order,
+.B identity_file
+or
+.BR identity_file_command ,
+the
+.B IdentityFile
+entries for the host in
+.IR \(ti/.ssh/config ,
+.BR ssh\-agent (1),
+then the default keys
+.RI ( \(ti/.ssh/id_ed25519 ,
+.IR id_ecdsa ,
+.IR id_rsa ).
+Other
+.BR ssh_config (5)
+settings, such as
+.BR ProxyJump ,
+.B Hostname
+or
+.BR Include ,
+are not used.
+Over HTTPS it uses
+.B username
+and
+.B password
+or
+.BR password_command .
+.SH EXAMPLES
+Dotfiles from a git repository: everything in it is pulled into the home
+directory, and only the listed paths are pushed back.
+.PP
+.RS
+.EX
+[[remote]]
+id = "dotfiles"
+backend = "git"
+url = "git@github.com:me/dotfiles.git"
+
+[[sync]]
+remote = "dotfiles"
+local = "\(ti"
+scope = "remote"
+include = [".bashrc", ".config/nvim"]
+trigger = "timer"
+interval = "15m"
+.EE
+.RE
+.PP
+A folder kept the same as one on a Nextcloud server:
+.PP
+.RS
+.EX
+[[remote]]
+id = "nextcloud"
+backend = "webdav"
+url = "https://cloud.example.com/remote.php/dav/files/me/"
+username = "me"
+password_command = "secret\-tool lookup service conflux"
+
+[[sync]]
+remote = "nextcloud"
+local = "\(ti/Documents"
+remote_path = "documents"
+scope = "mirror"
+deletions = "allow"
+.EE
+.RE
+.PP
+A backup disk, synced on changes on either side, in the
+.B laptop
+profile only:
+.PP
+.RS
+.EX
+[[sync]]
+remote_fs = "/mnt/backup/documents"
+local = "\(ti/Documents"
+scope = "mirror"
+trigger = "watch\-both"
+profiles = ["laptop"]
+.EE
+.RE
+.PP
+A notes repository already cloned:
+.PP
+.RS
+.EX
+[[sync]]
+git_repo = "\(ti/notes"
+.EE
+.RE
+.SH FILES
+.TP
+.I /usr/share/doc/conflux/config.example.toml
+Every option, commented out at its default.
+.SH SEE ALSO
+.BR conflux (1),
+.BR git (1),
+.BR ssh_config (5)
+.PP
+More examples:
+.br
+.UR https://github.com/AperteDev/conflux/blob/master/docs/FEATURES.md
+.UE

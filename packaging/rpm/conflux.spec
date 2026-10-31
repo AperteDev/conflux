@@ -95,6 +95,8 @@ appstreamcli validate --no-net %{buildroot}%{_metainfodir}/dev.aperte.Conflux.me
 %license LICENSE LICENSE.dependencies cargo-vendor.txt
 %doc README.md docs/FEATURES.md docs/CHANGELOG.md config.example.toml
 %{_bindir}/conflux
+%{_mandir}/man1/conflux.1*
+%{_mandir}/man5/conflux.5*
 %{_unitdir}/conflux.service
 %{_unitdir}/conflux@.service
 %{_userunitdir}/conflux.service

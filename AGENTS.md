@@ -11,6 +11,9 @@ Update these in the same commit as the change that affects them:
   `docs/FEATURES.md` describes in detail what users can do today: features, examples, every
   option, commands, the app. Update them with any user-visible change (a new option, command,
   backend, install path or behaviour), along with `config.example.toml` for config options.
+- The man pages: `man/conflux.1` for the commands and options of the CLI (a test in
+  `crates/conflux` checks it names each of them), `man/conflux.5` for the config file. CI
+  checks both with `groff -man -Tutf8 -ww -z`.
 - `docs/CHANGELOG.md`: add user-visible changes under `## [Unreleased]`. It follows
   [Keep a Changelog](https://keepachangelog.com/en/1.1.0/): `Added`, `Changed`, `Deprecated`,
   `Removed`, `Fixed`, `Security`; version links at the end.
