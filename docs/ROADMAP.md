@@ -246,9 +246,47 @@ data/                   .desktop, metainfo, icons, polkit policy, gresource
 8. [x] **Fedora COPR:** an RPM spec with both packages; CI builds it as COPR does. Left to do
    outside the repo: the COPR project, building from `.copr/Makefile` on each release tag.
 9. [x] **Flatpak:** the app alone, user scope, see [Packages](#packages).
-10. [ ] **Store listing:** screenshots in `docs/screenshots/` and in the metainfo (taken from
+10. [~] **Before the first release:** polish and a few features, see
+    [Before the first release](#before-the-first-release).
+11. [ ] **Store listing:** screenshots in `docs/screenshots/` and in the metainfo (taken from
     the release tag, as Todav's are), and the AUR's `conflux-gtk`, `conflux-gtk-bin` and
     `conflux-gtk-git` packages.
+
+### Before the first release
+
+What a walk through the app with a realistic config showed was missing:
+
+- [ ] **Plain warnings:** a config warning names its sync by its title and says what is wrong
+  in plain words, opens the sync, and offers the fix when there is one (an empty `include`:
+  Sync Everything). Core gives the warnings as data (`Config::lints`), each with its sync;
+  `warnings()` keeps the CLI's and the log's text.
+- [ ] **Short errors:** a sync's row says why it failed in a few words ("Can't reach the
+  server", "Wrong username or password"), its page the whole error. Classified in the app
+  (`text::error_reason`); the WebDAV backend's errors name their cause (connection refused,
+  DNS), which reqwest otherwise leaves out.
+- [ ] **A sync's page acts:** Sync Now, Dry Run and Open Local Folder in its header (Delete in
+  its menu), and its status follows the daemon live, the last sync as "3 min ago".
+- [ ] **Small fixes:** a remote's page opened with its Id selected for editing; long choices
+  (Scope) were cut off, now shown under their title; a folder remote's path reads with `~`.
+- [ ] **Add Sync asks what and when:** both ways, only picked paths, upload only (`scope =
+  "local"`) or download only (`scope = "remote"`), and the trigger; remotes by their label;
+  and a new remote can be added from it.
+- [ ] **Keyboard Shortcuts** window (`GtkShortcutsWindow`: libadwaita's own dialog needs 1.8,
+  the app supports 1.7).
+- [ ] **Test Connection** on a remote's page and in Add Remote: `backend::check` in core
+  connects the way a sync would (WebDAV `PROPFIND` of depth 0, git's list of refs and the
+  branch, a folder's existence) without changing anything. User scope only: the app runs it
+  as the user, while a system remote's credentials are the system daemon's.
+- [ ] **Passwords in the keyring:** the app saves a remote's password with `secret-tool store`
+  (attributes `service conflux remote <id>`) and writes `password_command = "secret-tool
+  lookup service conflux remote <id>"` in place of `password`. User scope only, outside the
+  Flatpak (whose keyring the host's daemon cannot read), and when `secret-tool` is installed.
+- [ ] **Notifications:** user daemons notify, through the session bus (`zbus`), when a sync
+  fails (once per run of failures, after the retries; withdrawn when it works again) and
+  when a sync leaves conflict copies. `[daemon] notify = false` turns them off; system
+  daemons have no session to notify. Clicking one opens the app at that sync: the app is
+  D-Bus activatable, and the daemon calls its `show-sync` action
+  (`org.freedesktop.Application.ActivateAction`).
 
 ## Packages
 
@@ -306,5 +344,6 @@ Per format:
 
 - Field-level validation errors; an include/exclude preview of the local tree.
 - Keyring helper for `password_command` (the system daemon cannot reach a user keyring).
-- Event stream from the daemon instead of status polling; desktop notifications on sync errors.
+- Event stream from the daemon instead of status polling.
+- Conflicts in the app: list a sync's conflict copies and keep one side or both.
 - Translations (gettext).
