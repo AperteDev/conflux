@@ -8,11 +8,12 @@ use conflux_core::config::{format_byte_size, Config, DEFAULT_GIT_PULL_INTERVAL};
 use conflux_core::config_edit::Section;
 use conflux_core::model::{Deletions, EmptyDirMode, RemoteKind};
 
-use gtk::gio;
+use conflux_core::config::Remote;
+use gtk::{gio, glib};
 
 use crate::editor::Edit;
 use crate::form::{self, Form, Kind, Toaster};
-use crate::model::{self, ConfigState, Loaded, Snapshot};
+use crate::model::{self, ConfigState, Loaded, Scope, Snapshot};
 use crate::scope::{self, ScopeView, ShowStatus};
 use crate::{text, ui};
 
@@ -606,6 +607,66 @@ pub fn sync_page(
     nav_page
 }
 
+/// Connect to `remote` as a sync would (`backend::check`), with `row` as the
+/// button that started it, and say how it went.
+pub fn test_connection(view: &Rc<ScopeView>, remote: Remote, row: &adw::ButtonRow) {
+    let title = row.title();
+    row.set_title("Testing…");
+    row.set_sensitive(false);
+    let (ctx, row) = (view.ctx().clone(), row.clone());
+    glib::spawn_future_local(async move {
+        let result = gio::spawn_blocking(move || conflux_core::backend::check(&remote))
+            .await
+            .expect("testing the connection panicked");
+        row.set_title(&title);
+        row.set_sensitive(true);
+        match result {
+            Ok(found) => ctx.toast(&found),
+            Err(e) => {
+                let e = e.to_string();
+                let reason = text::error_reason(&e);
+                let body = if reason == e {
+                    reason
+                } else {
+                    format!("{reason}\n\n{e}")
+                };
+                let dialog = adw::AlertDialog::new(Some("Connection Failed"), Some(&body));
+                dialog.add_response("close", "Close");
+                dialog.present(Some(&ctx.window));
+            }
+        }
+    });
+}
+
+/// A group with Test Connection for the remote at `index`, as the config
+/// file has it now, in the user's scope: the app tests as this user.
+fn test_group(view: &Rc<ScopeView>, index: usize) -> Option<adw::PreferencesGroup> {
+    if view.scope != Scope::User {
+        return None;
+    }
+    let group = adw::PreferencesGroup::new();
+    let row = adw::ButtonRow::builder().title("Test Connection").build();
+    group.add(&row);
+    let weak = Rc::downgrade(view);
+    row.connect_activated(move |row| {
+        let Some(view) = weak.upgrade() else {
+            return;
+        };
+        // The latest look at the file, edits on this page included.
+        let remote = view.snapshot().and_then(|s| match &s.config {
+            ConfigState::Loaded(loaded) => loaded.prepared.as_ref()?.remotes.get(index).cloned(),
+            _ => None,
+        });
+        match remote {
+            Some(remote) => test_connection(&view, remote, row),
+            None => view
+                .ctx()
+                .toast("This remote cannot be read; check the config"),
+        }
+    });
+    Some(group)
+}
+
 /// The `[[remote]]` at `index` of the snapshot's config.
 pub fn remote_page(
     view: &Rc<ScopeView>,
@@ -735,6 +796,7 @@ pub fn remote_page(
         let rows: Vec<&gtk::Widget> = rows.iter().collect();
         groups.push(group("Connection", &rows));
     }
+    groups.extend(test_group(view, index));
 
     let pull = match daemon.pull_interval {
         Some(d) => format!("{} from [daemon]", text::duration(d)),

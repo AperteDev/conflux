@@ -15,7 +15,7 @@ use reqwest::blocking::{Client, RequestBuilder};
 use reqwest::{Method, StatusCode, Url};
 use std::collections::BTreeSet;
 use std::path::Path;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 const PROPFIND_BODY: &str = r#"<?xml version="1.0" encoding="utf-8"?>
 <d:propfind xmlns:d="DAV:">
@@ -37,6 +37,34 @@ pub struct WebdavBackend {
     remote_path: String,
     username: Option<String>,
     password: Option<String>,
+}
+
+/// How long [`check`] waits for the server.
+const CHECK_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// See [`super::check`]: a `PROPFIND` of depth 0 on the remote's URL, with its
+/// credentials.
+pub fn check(remote: &Remote) -> Result<String> {
+    let root = root_url(&remote.url)?;
+    let client = Client::builder()
+        .timeout(CHECK_TIMEOUT)
+        .build()
+        .map_err(|e| Error::Backend(format!("failed to build http client: {e}")))?;
+    let method = Method::from_bytes(b"PROPFIND").expect("valid method");
+    let mut request = client
+        .request(method, root)
+        .header("Depth", "0")
+        .header(reqwest::header::CONTENT_TYPE, "application/xml")
+        .body(PROPFIND_BODY);
+    if let Some(user) = &remote.username {
+        request = request.basic_auth(user, remote.resolve_password()?);
+    }
+    let status = request.send().map_err(net_err)?.status();
+    if status.as_u16() == 207 || status.is_success() {
+        Ok("Connected".to_string())
+    } else {
+        Err(Error::Backend(format!("PROPFIND failed: {status}")))
+    }
 }
 
 impl WebdavBackend {
@@ -506,6 +534,8 @@ mod tests {
         .unwrap();
         let backend = WebdavBackend::new(&config.remotes[0], &config.syncs[0]).unwrap();
         let err = backend.snapshot().unwrap_err().to_string();
+        assert!(err.contains("Connection refused"), "{err}");
+        let err = check(&config.remotes[0]).unwrap_err().to_string();
         assert!(err.contains("Connection refused"), "{err}");
     }
 

@@ -6,7 +6,7 @@
 
 use super::{walk_empty_dirs, walk_snapshot, Backend, RemoteSnapshot};
 use crate::config::{Remote, Sync};
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::hash::hash_bytes;
 use crate::model::RemoteMeta;
 use crate::relpath::RelPath;
@@ -28,6 +28,21 @@ pub fn base_path(remote: &Remote, sync: &Sync) -> PathBuf {
         base.push(part);
     }
     base
+}
+
+/// See [`super::check`]: whether the folder is there.
+pub fn check(remote: &Remote) -> Result<String> {
+    let path = std::path::Path::new(&remote.url);
+    if path.is_dir() {
+        Ok("The folder is there".to_string())
+    } else if path.exists() {
+        Err(Error::Backend(format!(
+            "{} is not a folder",
+            path.display()
+        )))
+    } else {
+        Err(Error::Backend(format!("{} does not exist", path.display())))
+    }
 }
 
 impl LocalBackend {

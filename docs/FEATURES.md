@@ -344,6 +344,11 @@ running daemons reload it at once. Leaving a setting empty, or choosing
 "Inherit", removes it from the file. Add Sync asks what a new sync syncs
 (everything both ways, paths picked later, or everything one way: upload or
 download only) and when it runs, and can add the remote it needs on the way.
+**Test Connection**, on a remote's page and in Add Remote, connects the way a
+sync would, without changing anything: it asks a WebDAV server for the URL with
+the credentials, lists a git repository's branches (and looks for `branch`), or
+looks for the folder, and says what went wrong if anything did. It runs as you,
+so it is offered for your own remotes only.
 
 It manages your daemons, one per profile: start and stop them, have them start at
 login, add one for a new profile with the syncs it runs, remove one, keep them

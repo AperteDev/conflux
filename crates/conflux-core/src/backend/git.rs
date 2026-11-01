@@ -154,6 +154,30 @@ impl GitAuth {
     }
 }
 
+/// See [`super::check`]: the repository's list of branches, with the remote's
+/// credentials, and its `branch` in it.
+pub fn check(remote: &Remote) -> Result<String> {
+    let auth = GitAuth::from_remote(remote)?;
+    let mut detached =
+        git2::Remote::create_detached(remote.url.as_str()).map_err(gerr("connect"))?;
+    let connection = detached
+        .connect_auth(git2::Direction::Fetch, Some(auth.callbacks()), None)
+        .map_err(gerr("connect"))?;
+    let heads = connection.list().map_err(gerr("list branches"))?;
+    let has = |branch: &str| {
+        let name = format!("refs/heads/{branch}");
+        heads.iter().any(|h| h.name() == name)
+    };
+    match &remote.branch {
+        Some(branch) if has(branch) => Ok(format!("Connected; the branch {branch} is there")),
+        Some(branch) => Err(Error::Backend(format!(
+            "the repository has no branch `{branch}`"
+        ))),
+        None if heads.is_empty() => Ok("Connected; the repository is empty".to_string()),
+        None => Ok("Connected".to_string()),
+    }
+}
+
 impl GitBackend {
     /// Build the backend, resolving credentials (may run `password_command`).
     pub fn new(remote: &Remote, sync: &Sync, state_dir: &Path) -> Result<Self> {

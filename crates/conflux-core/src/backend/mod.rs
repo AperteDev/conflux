@@ -62,6 +62,20 @@ pub trait Backend: Send {
     }
 }
 
+/// Connect to `remote` the way a sync would, without changing anything, and
+/// say what was found: a WebDAV server answering for its URL with its
+/// credentials, a git repository listing its branches (with its `branch`), or
+/// a folder that is there. For a UI's "Test Connection"; `remote` is resolved
+/// (`~` and variables expanded), as [`Config`](crate::Config) prepares it.
+pub fn check(remote: &Remote) -> Result<String> {
+    use crate::model::RemoteKind;
+    match remote.backend {
+        RemoteKind::Filesystem => local::check(remote),
+        RemoteKind::Webdav => webdav::check(remote),
+        RemoteKind::Git => git::check(remote),
+    }
+}
+
 /// Walk `base` and return every *empty* subdirectory as a `RelPath` (the base
 /// itself is never included). A directory is empty when it contains no entries.
 pub(crate) fn walk_empty_dirs(base: &Path) -> Result<BTreeSet<RelPath>> {

@@ -274,7 +274,7 @@ What a walk through the app with a realistic config showed was missing:
   of them were cut off alike.
 - [x] **Keyboard Shortcuts** window (`GtkShortcutsWindow`: libadwaita's own dialog needs 1.8,
   the app supports 1.7).
-- [ ] **Test Connection** on a remote's page and in Add Remote: `backend::check` in core
+- [x] **Test Connection** on a remote's page and in Add Remote: `backend::check` in core
   connects the way a sync would (WebDAV `PROPFIND` of depth 0, git's list of refs and the
   branch, a folder's existence) without changing anything. User scope only: the app runs it
   as the user, while a system remote's credentials are the system daemon's.

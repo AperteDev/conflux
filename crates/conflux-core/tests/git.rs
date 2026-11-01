@@ -143,3 +143,39 @@ fn git_round_trip_push_pull_update_delete() {
     assert_eq!(report.removed.len(), 1, "B removes locally");
     assert!(!root_b.join("app.conf").exists());
 }
+
+#[test]
+fn check_finds_the_repository_and_its_branch() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bare = tmp.path().join("remote.git");
+    seed_bare(&bare);
+    let mut cfg = config(&tmp.path().join("a"), &bare);
+    let remote = &mut cfg.remotes[0];
+    assert_eq!(
+        backend::check(remote).unwrap(),
+        "Connected; the branch main is there"
+    );
+    remote.branch = Some("other".to_string());
+    let err = backend::check(remote).unwrap_err().to_string();
+    assert!(err.contains("no branch `other`"), "{err}");
+    remote.url = tmp.path().join("missing.git").display().to_string();
+    assert!(backend::check(remote).is_err());
+}
+
+#[test]
+fn check_finds_a_folder() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cfg = Config::from_toml_str(&format!(
+        "[[remote]]\nid = \"r\"\nbackend = \"filesystem\"\nurl = \"{}\"\n",
+        tmp.path().display()
+    ))
+    .unwrap();
+    assert_eq!(
+        backend::check(&cfg.remotes[0]).unwrap(),
+        "The folder is there"
+    );
+    let mut remote = cfg.remotes[0].clone();
+    remote.url = tmp.path().join("missing").display().to_string();
+    let err = backend::check(&remote).unwrap_err().to_string();
+    assert!(err.contains("does not exist"), "{err}");
+}

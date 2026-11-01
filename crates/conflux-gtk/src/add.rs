@@ -6,10 +6,11 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use conflux_core::config_edit::{toml_edit, Entry};
+use conflux_core::Config;
 
-use crate::model::ConfigState;
+use crate::model::{ConfigState, Scope};
 use crate::scope::ScopeView;
-use crate::ui;
+use crate::{detail, ui};
 
 /// A dialog with Cancel and Add, a banner for what is wrong, and `page`.
 pub fn dialog(title: &str, page: &adw::PreferencesPage) -> (adw::Dialog, gtk::Button, adw::Banner) {
@@ -385,46 +386,56 @@ fn add_remote_then(view: &Rc<ScopeView>, added: impl Fn(String, String) + 'stati
     show_backend(0);
     backend.connect_selected_notify(move |row| show_backend(row.selected()));
 
+    let fields = Rc::new(RemoteFields {
+        id,
+        label,
+        backend,
+        url,
+        username,
+        password_command,
+        branch,
+    });
     let (dialog, add_button, banner) = dialog("Add Remote", &page);
+
+    // Testing runs as this user, which is what the system daemon is not.
+    if view.scope == Scope::User {
+        let test = adw::PreferencesGroup::new();
+        let row = adw::ButtonRow::builder().title("Test Connection").build();
+        test.add(&row);
+        page.add(&test);
+        let (view, fields, banner) = (view.clone(), fields.clone(), banner.clone());
+        row.connect_activated(move |row| {
+            let remote = fields.table().and_then(|table| {
+                let mut doc = toml_edit::DocumentMut::new();
+                let mut list = toml_edit::ArrayOfTables::new();
+                list.push(table);
+                doc.insert("remote", toml_edit::Item::ArrayOfTables(list));
+                // Resolved as the daemon would (`~`, variables).
+                Config::parse_unvalidated(&doc.to_string())
+                    .ok()
+                    .and_then(|mut c| c.remotes.pop())
+                    .ok_or("This remote cannot be read")
+            });
+            match remote {
+                Ok(remote) => detail::test_connection(&view, remote, row),
+                Err(why) => refuse(&banner, why),
+            }
+        });
+    }
+
     let view = view.clone();
     let weak = dialog.downgrade();
     add_button.connect_clicked(move |_| {
         let Some(dialog) = weak.upgrade() else {
             return;
         };
-        if text(&id).is_empty() {
-            return refuse(&banner, "Give the remote an id");
-        }
-        if text(&url).is_empty() {
-            return refuse(&banner, "Fill in where the remote is");
-        }
-        let b = backend.selected();
-        let mut table = toml_edit::Table::new();
-        table.insert("id", toml_edit::value(text(&id)));
-        if !text(&label).is_empty() {
-            table.insert("label", toml_edit::value(text(&label)));
-        }
-        let kind = ["webdav", "git", "filesystem"][b.min(2) as usize];
-        table.insert("backend", toml_edit::value(kind));
-        table.insert("url", toml_edit::value(text(&url)));
-        if b != 2 {
-            for (key, row) in [
-                ("username", &username),
-                ("password_command", &password_command),
-            ] {
-                if !text(row).is_empty() {
-                    table.insert(key, toml_edit::value(text(row)));
-                }
-            }
-        }
-        if b == 1 && !text(&branch).is_empty() {
-            table.insert("branch", toml_edit::value(text(&branch)));
-        }
-        let (added, new_id) = (added.clone(), text(&id));
-        let name = remote_name(
-            &new_id,
-            Some(text(&label)).filter(|l| !l.is_empty()).as_deref(),
-        );
+        let table = match fields.table() {
+            Ok(table) => table,
+            Err(why) => return refuse(&banner, why),
+        };
+        let (added, new_id) = (added.clone(), text(&fields.id));
+        let label = text(&fields.label);
+        let name = remote_name(&new_id, Some(label).filter(|l| !l.is_empty()).as_deref());
         add(
             &view,
             &dialog,
@@ -436,4 +447,50 @@ fn add_remote_then(view: &Rc<ScopeView>, added: impl Fn(String, String) + 'stati
         );
     });
     dialog.present(Some(&window));
+}
+
+/// The rows of Add Remote.
+struct RemoteFields {
+    id: adw::EntryRow,
+    label: adw::EntryRow,
+    backend: adw::ComboRow,
+    url: adw::EntryRow,
+    username: adw::EntryRow,
+    password_command: adw::EntryRow,
+    branch: adw::EntryRow,
+}
+
+impl RemoteFields {
+    /// The `[[remote]]` the rows describe, or what is missing.
+    fn table(&self) -> Result<toml_edit::Table, &'static str> {
+        if text(&self.id).is_empty() {
+            return Err("Give the remote an id");
+        }
+        if text(&self.url).is_empty() {
+            return Err("Fill in where the remote is");
+        }
+        let b = self.backend.selected();
+        let mut table = toml_edit::Table::new();
+        table.insert("id", toml_edit::value(text(&self.id)));
+        if !text(&self.label).is_empty() {
+            table.insert("label", toml_edit::value(text(&self.label)));
+        }
+        let kind = ["webdav", "git", "filesystem"][b.min(2) as usize];
+        table.insert("backend", toml_edit::value(kind));
+        table.insert("url", toml_edit::value(text(&self.url)));
+        if b != 2 {
+            for (key, row) in [
+                ("username", &self.username),
+                ("password_command", &self.password_command),
+            ] {
+                if !text(row).is_empty() {
+                    table.insert(key, toml_edit::value(text(row)));
+                }
+            }
+        }
+        if b == 1 && !text(&self.branch).is_empty() {
+            table.insert("branch", toml_edit::value(text(&self.branch)));
+        }
+        Ok(table)
+    }
 }
