@@ -250,11 +250,10 @@ data/                   .desktop, metainfo, icons, polkit policy, gresource
     [Before the first release](#before-the-first-release).
 11. [~] **Store listing:** screenshots in `docs/screenshots/` and in the metainfo (taken from
     the release tag, as Todav's are), and the AUR's `conflux-gtk`, `conflux-gtk-bin` and
-    `conflux-gtk-git` packages. The AUR packages are written (`make build-gtk install-gtk`;
-    `-bin` unpacks the app's tarball, x86_64 only; `libsecret` optional): `-git` goes up now,
-    the other two by hand after the first release with the app, their sources being its tag
-    and tarball, and then AURomatic is made their co-maintainer; from the next release on,
-    `scripts/aur.sh` moves them (it skips a package not on the AUR yet).
+    `conflux-gtk-git` packages. The AUR packages are up since 2.0.0 (`make build-gtk
+    install-gtk`; `-bin` unpacks the app's tarball, x86_64 only; `libsecret` optional); with
+    AURomatic as their co-maintainer, `scripts/aur.sh` moves `conflux-gtk` and
+    `conflux-gtk-bin` to each release (it skips a package not on the AUR yet).
 
 ### Before the first release
 
