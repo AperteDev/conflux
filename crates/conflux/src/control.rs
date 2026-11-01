@@ -4,26 +4,65 @@
 
 use std::path::Path;
 
-use anyhow::Context;
+use anyhow::{anyhow, Context};
 use conflux_core::ipc::{client, Request, Response};
+use conflux_core::paths::{unit_name, DEFAULT_PROFILE};
 
-/// Send a request to the daemon, waiting as long as it takes. When nothing
-/// listens on `socket`, `legacy` (where a daemon from before the socket moved
-/// listens) is tried too.
-pub fn send(socket: &Path, legacy: Option<&Path>, request: &Request) -> anyhow::Result<Response> {
-    let result = match client::send(socket, request, None) {
-        Err(e) if client::is_not_running(&e) => match legacy {
+/// The daemon a control command talks to.
+pub struct Target<'a> {
+    pub socket: &'a Path,
+    /// Where a user daemon from before the socket moved listens, tried when
+    /// nothing listens on `socket`.
+    pub legacy: Option<&'a Path>,
+    pub system: bool,
+    pub profile: &'a str,
+}
+
+/// Send a request to the daemon, waiting as long as it takes.
+pub fn send(target: &Target, request: &Request) -> anyhow::Result<Response> {
+    let result = match client::send(target.socket, request, None) {
+        Err(e) if client::is_not_running(&e) => match target.legacy {
             Some(old) => client::send(old, request, None).map_err(|_| e),
             None => Err(e),
         },
         other => other,
     };
-    result.with_context(|| {
-        format!(
-            "could not talk to the daemon at {} (is it running?)",
-            socket.display()
-        )
-    })
+    match result {
+        Err(e) if client::is_not_running(&e) => Err(anyhow!(not_running(target))),
+        other => other.with_context(|| {
+            format!(
+                "could not talk to the daemon at {}",
+                target.socket.display()
+            )
+        }),
+    }
+}
+
+/// Say that `target`'s daemon is not running, and how to start it.
+fn not_running(target: &Target) -> String {
+    let default = target.profile == DEFAULT_PROFILE;
+    let whose = match (target.system, default) {
+        (false, true) => "the conflux daemon".to_string(),
+        (false, false) => format!("the conflux daemon of profile {}", target.profile),
+        (true, true) => "the system's conflux daemon".to_string(),
+        (true, false) => format!("the system's conflux daemon of profile {}", target.profile),
+    };
+    let unit = unit_name(target.profile);
+    let unit = unit.trim_end_matches(".service");
+    let start = if target.system {
+        format!("`sudo systemctl start {unit}`")
+    } else {
+        let profile = if default {
+            String::new()
+        } else {
+            format!(" --profile {}", target.profile)
+        };
+        format!("`systemctl --user start {unit}`, or run `conflux{profile} daemon`")
+    };
+    format!(
+        "{whose} is not running (nothing listens on {})\nstart it with {start}",
+        target.socket.display()
+    )
 }
 
 /// Render a [`Response`] for the terminal. Returns whether the command succeeded.
@@ -107,5 +146,41 @@ pub fn print_response(response: &Response) -> bool {
             eprintln!("error: {err}");
             false
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn message(system: bool, profile: &str) -> String {
+        let socket = Path::new("/run/conflux.sock");
+        not_running(&Target {
+            socket,
+            legacy: None,
+            system,
+            profile,
+        })
+    }
+
+    #[test]
+    fn not_running_says_how_to_start_the_daemon() {
+        assert_eq!(
+            message(false, "default"),
+            "the conflux daemon is not running (nothing listens on /run/conflux.sock)\n\
+             start it with `systemctl --user start conflux`, or run `conflux daemon`"
+        );
+        assert_eq!(
+            message(false, "desktop"),
+            "the conflux daemon of profile desktop is not running \
+             (nothing listens on /run/conflux.sock)\n\
+             start it with `systemctl --user start conflux@desktop`, \
+             or run `conflux --profile desktop daemon`"
+        );
+        assert!(message(true, "default").ends_with("`sudo systemctl start conflux`"));
+        assert!(
+            message(true, "backup").starts_with("the system's conflux daemon of profile backup")
+        );
+        assert!(message(true, "backup").ends_with("`sudo systemctl start conflux@backup`"));
     }
 }

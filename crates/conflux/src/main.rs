@@ -120,7 +120,15 @@ fn run(cli: &Cli, log_reload: &LogReload) -> anyhow::Result<ExitCode> {
         RunMode::User => conflux_core::paths::legacy_user_socket(cli.profile.as_deref()),
         RunMode::System => None,
     };
-    let legacy = legacy.as_deref();
+    let daemon = control::Target {
+        socket: &paths.socket,
+        legacy: legacy.as_deref(),
+        system: mode == RunMode::System,
+        profile: cli
+            .profile
+            .as_deref()
+            .unwrap_or(conflux_core::paths::DEFAULT_PROFILE),
+    };
 
     match &cli.command {
         Command::Config { action } => run_config(action, &paths).map(|()| ExitCode::SUCCESS),
@@ -142,7 +150,7 @@ fn run(cli: &Cli, log_reload: &LogReload) -> anyhow::Result<ExitCode> {
             daemon::run(config, paths, mode == RunMode::System).map(|()| ExitCode::SUCCESS)
         }
         Command::Status => {
-            let response = control::send(&paths.socket, legacy, &Request::Status)?;
+            let response = control::send(&daemon, &Request::Status)?;
             Ok(exit_code(control::print_response(&response)))
         }
         Command::Sync { group, dry_run } => {
@@ -155,11 +163,11 @@ fn run(cli: &Cli, log_reload: &LogReload) -> anyhow::Result<ExitCode> {
             } else {
                 Request::Sync(target)
             };
-            let response = control::send(&paths.socket, legacy, &request)?;
+            let response = control::send(&daemon, &request)?;
             Ok(exit_code(control::print_response(&response)))
         }
         Command::Reload => {
-            let response = control::send(&paths.socket, legacy, &Request::Reload)?;
+            let response = control::send(&daemon, &Request::Reload)?;
             Ok(exit_code(control::print_response(&response)))
         }
     }

@@ -43,6 +43,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Profile names are limited to ASCII letters, digits, `_`, `-` and `.` (1-64 characters, not
   starting with `.` or `-`), as they become unit, socket and directory names.
 - Release assets come with one `SHA256SUMS` file instead of a `.sha256` file per tarball.
+- When the daemon is not running, `conflux status`, `sync` and `reload` say so plainly and
+  show how to start it (the systemd unit of its scope and profile, or `conflux daemon`),
+  instead of an OS error.
 
 ### Removed
 
