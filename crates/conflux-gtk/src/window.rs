@@ -60,6 +60,9 @@ pub fn open(app: &adw::Application) {
     let b = builder!("window");
     let window: adw::ApplicationWindow = ui::get(&b, "window");
     window.set_application(Some(app));
+    // Its `win.show-help-overlay` action shows the Keyboard Shortcuts.
+    let shortcuts: gtk::ShortcutsWindow = ui::get(&builder!("shortcuts"), "shortcuts");
+    window.set_help_overlay(Some(&shortcuts));
     // libadwaita's striped header bar marks a development build.
     if cfg!(debug_assertions) {
         window.add_css_class("devel");

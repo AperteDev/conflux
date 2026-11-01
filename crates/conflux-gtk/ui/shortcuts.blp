@@ -1,0 +1,40 @@
+using Gtk 4.0;
+
+// The Keyboard Shortcuts window, the window's help overlay (src/window.rs). The
+// accelerators are set in src/main.rs. (libadwaita's own dialog needs 1.8.)
+Gtk.ShortcutsWindow shortcuts {
+  modal: true;
+
+  Gtk.ShortcutsSection {
+    section-name: "shortcuts";
+
+    Gtk.ShortcutsGroup {
+      title: _("General");
+
+      Gtk.ShortcutsShortcut {
+        title: _("Refresh");
+        accelerator: "<Control>r";
+      }
+
+      Gtk.ShortcutsShortcut {
+        title: _("Preferences");
+        accelerator: "<Control>comma";
+      }
+
+      Gtk.ShortcutsShortcut {
+        title: _("Keyboard Shortcuts");
+        accelerator: "<Control>question";
+      }
+
+      Gtk.ShortcutsShortcut {
+        title: _("Close Window");
+        accelerator: "<Control>w";
+      }
+
+      Gtk.ShortcutsShortcut {
+        title: _("Quit");
+        accelerator: "<Control>q";
+      }
+    }
+  }
+}

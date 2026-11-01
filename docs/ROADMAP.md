@@ -272,7 +272,7 @@ What a walk through the app with a realistic config showed was missing:
   "local"`) or download only (`scope = "remote"`), and the trigger; remotes by their label;
   and a new remote can be added from it. Long choices (Scope) wrap in their list, where two
   of them were cut off alike.
-- [ ] **Keyboard Shortcuts** window (`GtkShortcutsWindow`: libadwaita's own dialog needs 1.8,
+- [x] **Keyboard Shortcuts** window (`GtkShortcutsWindow`: libadwaita's own dialog needs 1.8,
   the app supports 1.7).
 - [ ] **Test Connection** on a remote's page and in Add Remote: `backend::check` in core
   connects the way a sync would (WebDAV `PROPFIND` of depth 0, git's list of refs and the

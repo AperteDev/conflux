@@ -51,6 +51,7 @@ fn main() -> glib::ExitCode {
     app.set_accels_for_action("window.close", &["<Control>w"]);
     app.set_accels_for_action("win.refresh", &["<Control>r", "F5"]);
     app.set_accels_for_action("win.preferences", &["<Control>comma"]);
+    app.set_accels_for_action("win.show-help-overlay", &["<Control>question"]);
 
     app.run()
 }
