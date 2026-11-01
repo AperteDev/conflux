@@ -113,6 +113,7 @@ appstreamcli validate --no-net %{buildroot}%{_metainfodir}/dev.aperte.Conflux.me
 %dir %{_prefix}/lib/conflux
 %{_prefix}/lib/conflux/conflux-helper
 %{_datadir}/applications/dev.aperte.Conflux.desktop
+%{_datadir}/dbus-1/services/dev.aperte.Conflux.service
 %{_metainfodir}/dev.aperte.Conflux.metainfo.xml
 %{_datadir}/icons/hicolor/scalable/apps/dev.aperte.Conflux.svg
 %{_datadir}/icons/hicolor/symbolic/apps/dev.aperte.Conflux-symbolic.svg

@@ -109,57 +109,6 @@ pub fn deletions(d: Deletions) -> &'static str {
     }
 }
 
-/// Why a sync failed, in a few words, from the daemon's error. Errors it knows
-/// read as their kind ("Can't reach the server"); any other as its first
-/// clause, without the "backend error:" in front.
-pub fn error_reason(error: &str) -> String {
-    let lower = error.to_lowercase();
-    let has = |needles: &[&str]| needles.iter().any(|n| lower.contains(n));
-    let known = if has(&["password_command"]) {
-        Some("The password command failed")
-    } else if has(&["certificate", "unknownissuer"]) {
-        Some("The server's certificate is not trusted")
-    } else if has(&[
-        "401",
-        "unauthorized",
-        "authentication required",
-        "authentication replays",
-        "no more ssh credentials",
-        "permission denied (publickey",
-    ]) {
-        Some("The server refused the login")
-    } else if has(&["403 forbidden"]) {
-        Some("The server denied access")
-    } else if has(&["507", "insufficient storage"]) {
-        Some("The server is out of space")
-    } else if has(&["no space left on device"]) {
-        Some("The disk is full")
-    } else if has(&[
-        "connection refused",
-        "failed to lookup address",
-        "name or service not known",
-        "failed to resolve address",
-        "could not resolve",
-        "temporary failure in name resolution",
-        "network is unreachable",
-        "no route to host",
-        "timed out",
-        "failed to connect",
-        "error sending request",
-    ]) {
-        Some("Can't reach the server")
-    } else if has(&["404 not found", "status code: 404", "repository not found"]) {
-        Some("Not found on the server")
-    } else {
-        None
-    };
-    if let Some(reason) = known {
-        return reason.to_string();
-    }
-    let rest = error.strip_prefix("backend error: ").unwrap_or(error);
-    capitalized(rest.split("; ").next().unwrap_or(rest).trim())
-}
-
 /// `text` with its first letter in upper case.
 pub fn capitalized(text: &str) -> String {
     let mut chars = text.chars();
@@ -252,47 +201,6 @@ mod tests {
         let s = sync("remote = \"r\"\nlocal = \"/a\"\ntrigger = \"timer\"\ninterval = \"15m\"");
         assert_eq!(trigger(&s, &daemon), "Every 15m");
         assert_eq!(duration(Duration::ZERO), "off");
-    }
-
-    #[test]
-    fn errors_read_as_their_reason() {
-        for (error, reason) in [
-            (
-                "backend error: webdav request failed: error sending request for url \
-                 (http://127.0.0.1:9/dav/): Connection refused (os error 111)",
-                "Can't reach the server",
-            ),
-            (
-                "backend error: git fetch failed: failed to resolve address for host: Name \
-                 or service not known; class=Net (12)",
-                "Can't reach the server",
-            ),
-            (
-                "backend error: PROPFIND failed: 401 Unauthorized",
-                "The server refused the login",
-            ),
-            (
-                "backend error: webdav request failed: error sending request for url \
-                 (https://x/): invalid peer certificate: UnknownIssuer",
-                "The server's certificate is not trusted",
-            ),
-            (
-                "backend error: password_command exited with exit status: 1",
-                "The password command failed",
-            ),
-            (
-                "branch `master` has no upstream to sync with, so conflux has nothing to \
-                 fetch from or push to; set one with `git push -u origin master`",
-                "Branch `master` has no upstream to sync with, so conflux has nothing to \
-                 fetch from or push to",
-            ),
-            (
-                "backend error: PUT a.txt failed: 500",
-                "PUT a.txt failed: 500",
-            ),
-        ] {
-            assert_eq!(error_reason(error), reason, "{error}");
-        }
     }
 
     #[test]

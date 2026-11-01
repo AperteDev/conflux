@@ -261,9 +261,9 @@ What a walk through the app with a realistic config showed was missing:
   Sync Everything). Core gives the warnings as data (`Config::lints`), each with its sync;
   `warnings()` keeps the CLI's and the log's text.
 - [x] **Short errors:** a sync's row says why it failed in a few words ("Can't reach the
-  server", "Wrong username or password"), its page the whole error. Classified in the app
-  (`text::error_reason`); the WebDAV backend's errors name their cause (connection refused,
-  DNS), which reqwest otherwise leaves out.
+  server", "The server refused the login"), its page the whole error. Classified in core
+  (`error::reason`, shared with the daemon's notifications); the WebDAV backend's errors
+  name their cause (connection refused, DNS), which reqwest otherwise leaves out.
 - [x] **A sync's page acts:** Sync Now, Dry Run and Open Local Folder in its header (Delete in
   its menu), and its status follows the daemon live, the last sync as "3 min ago".
 - [x] **Small fixes:** a remote's page opened with its Id selected for editing; long choices
@@ -284,12 +284,15 @@ What a walk through the app with a realistic config showed was missing:
   Flatpak (whose keyring the host's daemon cannot read), and when `secret-tool` is installed:
   the `.deb` and the RPM recommend it (`libsecret-tools`, `/usr/bin/secret-tool`); the AUR
   package should list `libsecret` in its `optdepends`.
-- [ ] **Notifications:** user daemons notify, through the session bus (`zbus`), when a sync
+- [x] **Notifications:** user daemons notify, through the session bus (`zbus`), when a sync
   fails (once per run of failures, after the retries; withdrawn when it works again) and
   when a sync leaves conflict copies. `[daemon] notify = false` turns them off; system
   daemons have no session to notify. Clicking one opens the app at that sync: the app is
-  D-Bus activatable, and the daemon calls its `show-sync` action
-  (`org.freedesktop.Application.ActivateAction`).
+  D-Bus activatable (`dev.aperte.Conflux.service`, `DBusActivatable=true`), and the daemon
+  calls its `show-sync` action (`org.freedesktop.Application.ActivateAction`). A sync
+  someone runs (`conflux sync`, Sync Now) notifies nothing, as they see how it went. zbus
+  is held at 5.13, the last release for Rust 1.85; the bus is joined only when there is
+  something to show.
 
 ## Packages
 

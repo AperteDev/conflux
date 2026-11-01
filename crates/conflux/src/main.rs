@@ -3,6 +3,7 @@
 
 mod control;
 mod daemon;
+mod notify;
 
 use std::path::PathBuf;
 use std::process::ExitCode;

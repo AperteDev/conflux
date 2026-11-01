@@ -47,7 +47,17 @@ fn main() -> glib::ExitCode {
     let quit = gio::ActionEntry::builder("quit")
         .activate(|app: &adw::Application, _, _| app.quit())
         .build();
-    app.add_action_entries([about, quit]);
+    // A daemon's notification opens the sync it is about, by its label (the
+    // app is D-Bus activatable, so this also starts it).
+    let show_sync = gio::ActionEntry::builder("show-sync")
+        .parameter_type(Some(glib::VariantTy::STRING))
+        .activate(|app: &adw::Application, _, label| {
+            if let Some(label) = label.and_then(|l| l.str()) {
+                window::show_sync(app, label);
+            }
+        })
+        .build();
+    app.add_action_entries([about, quit, show_sync]);
     app.set_accels_for_action("app.quit", &["<Control>q"]);
     app.set_accels_for_action("window.close", &["<Control>w"]);
     app.set_accels_for_action("win.refresh", &["<Control>r", "F5"]);

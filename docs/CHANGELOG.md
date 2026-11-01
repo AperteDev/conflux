@@ -25,6 +25,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   state. It quits, locking the app again, on Lock or when the window closes.
 - Daemons answer an `Info` request (version, profile, config file, process id), and report
   each group's `id` and whether it is syncing right now in their status.
+- Desktop notifications from user daemons: when a sync fails (once, after its retries,
+  withdrawn when it works again) and when one leaves conflict copies. Clicking one opens the
+  app at that sync. `[daemon] notify = false` turns them off.
 - Packages for both: `.deb` packages for Ubuntu 26.04 and newer (`conflux` for amd64 and
   arm64, `conflux-gtk` for amd64), a tarball of the app next to the CLI's, a Flatpak bundle of
   the app (your own config and daemons only), and an RPM spec for Fedora with `conflux-gtk`

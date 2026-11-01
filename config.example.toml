@@ -36,6 +36,11 @@
 # each profile its own state dir + socket so instances can run in parallel.
 # profile = "default"
 
+# Desktop notifications from a user daemon: when a sync fails (once, after its
+# retries, until it works again) and when one leaves conflict copies. Clicking
+# one opens the Conflux app at that sync. A system daemon never notifies.
+# notify = true
+
 # --- Defaults inherited by every sync. Override any of them per-sync;
 #     `pull_interval` and `max_file_size` can also be set per-remote. ----------
 

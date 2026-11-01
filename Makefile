@@ -41,27 +41,26 @@ install-cli:
 	install -Dm644 config.example.toml $(DESTDIR)$(DATADIR)/doc/conflux/config.example.toml
 	install -Dm644 LICENSE $(DESTDIR)$(DATADIR)/licenses/conflux/LICENSE
 
-# The app, its helper and what the desktop needs of it: desktop file, metainfo,
-# icons and the polkit policy naming the helper.
-install-gtk:
-	install -Dm755 $(BUILD)/conflux-gtk $(DESTDIR)$(BINDIR)/conflux-gtk
+# The app with its helper and the polkit policy naming the helper.
+install-gtk: install-app
 	install -Dm755 $(BUILD)/conflux-helper $(DESTDIR)$(HELPER)
-	install -Dm644 data/$(ID).desktop $(DESTDIR)$(DATADIR)/applications/$(ID).desktop
-	install -Dm644 data/$(ID).metainfo.xml $(DESTDIR)$(DATADIR)/metainfo/$(ID).metainfo.xml
-	install -Dm644 data/icons/hicolor/scalable/apps/$(ID).svg $(ICONS)/scalable/apps/$(ID).svg
-	install -Dm644 data/icons/hicolor/symbolic/apps/$(ID)-symbolic.svg \
-	  $(ICONS)/symbolic/apps/$(ID)-symbolic.svg
 	sed 's|/usr/lib/conflux/conflux-helper|$(HELPER)|' data/dev.aperte.conflux.policy | \
 	  install -Dm644 /dev/stdin $(DESTDIR)$(DATADIR)/polkit-1/actions/dev.aperte.conflux.policy
 	install -Dm644 LICENSE $(DESTDIR)$(DATADIR)/licenses/conflux-gtk/LICENSE
 
 # The app alone, for the Flatpak: no helper, as the sandbox cannot run it.
-install-flatpak:
+install-flatpak: install-app
+
+# The app and what the desktop needs of it: desktop file, D-Bus service (it is
+# D-Bus activatable, so notifications can open it), metainfo and icons.
+install-app:
 	install -Dm755 $(BUILD)/conflux-gtk $(DESTDIR)$(BINDIR)/conflux-gtk
 	install -Dm644 data/$(ID).desktop $(DESTDIR)$(DATADIR)/applications/$(ID).desktop
+	sed 's|/usr/bin/conflux-gtk|$(BINDIR)/conflux-gtk|' data/$(ID).service | \
+	  install -Dm644 /dev/stdin $(DESTDIR)$(DATADIR)/dbus-1/services/$(ID).service
 	install -Dm644 data/$(ID).metainfo.xml $(DESTDIR)$(DATADIR)/metainfo/$(ID).metainfo.xml
 	install -Dm644 data/icons/hicolor/scalable/apps/$(ID).svg $(ICONS)/scalable/apps/$(ID).svg
 	install -Dm644 data/icons/hicolor/symbolic/apps/$(ID)-symbolic.svg \
 	  $(ICONS)/symbolic/apps/$(ID)-symbolic.svg
 
-.PHONY: build-cli build-gtk install-cli install-gtk install-flatpak
+.PHONY: build-cli build-gtk install-cli install-gtk install-flatpak install-app

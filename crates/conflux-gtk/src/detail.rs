@@ -9,6 +9,7 @@ use conflux_core::config_edit::Section;
 use conflux_core::model::{Deletions, EmptyDirMode, RemoteKind};
 
 use conflux_core::config::Remote;
+use conflux_core::error;
 use gtk::{gio, glib};
 
 use crate::editor::Edit;
@@ -566,7 +567,7 @@ pub fn sync_page(
             Some((daemon, g)) => {
                 let outcome = match (&g.last_error, &g.last_summary) {
                     _ if busy => "Syncing…".to_string(),
-                    (Some(e), _) => format!("Failed: {}", text::error_reason(e)),
+                    (Some(e), _) => format!("Failed: {}", error::reason(e)),
                     (None, Some(s)) => text::capitalized(&model::summary_text(s)),
                     (None, None) => "None yet".to_string(),
                 };
@@ -587,7 +588,7 @@ pub fn sync_page(
         result.set_subtitle(&outcome);
         result.set_visible(status.is_some());
         // The whole error, when the result gives only its reason.
-        let full = failure.filter(|e| text::error_reason(e) != *e);
+        let full = failure.filter(|e| error::reason(e) != *e);
         error.set_subtitle(full.as_deref().unwrap_or_default());
         error.set_visible(full.is_some());
         sync_now.set_sensitive(status.is_some() && !busy);
@@ -624,7 +625,7 @@ pub fn test_connection(view: &Rc<ScopeView>, remote: Remote, row: &adw::ButtonRo
             Ok(found) => ctx.toast(&found),
             Err(e) => {
                 let e = e.to_string();
-                let reason = text::error_reason(&e);
+                let reason = error::reason(&e);
                 let body = if reason == e {
                     reason
                 } else {

@@ -109,6 +109,11 @@ pub struct DaemonConfig {
     /// every sync (not reachable from config).
     #[serde(default = "default_profile")]
     pub profile: Option<String>,
+    /// Whether a user daemon shows desktop notifications: when a sync fails
+    /// (once, until it works again) and when one leaves conflict copies. A
+    /// system daemon has no desktop session to notify.
+    #[serde(default = "default_notify")]
+    pub notify: bool,
 }
 
 impl Default for DaemonConfig {
@@ -123,6 +128,7 @@ impl Default for DaemonConfig {
             max_file_size: default_max_file_size(),
             exclude: default_exclude(),
             profile: default_profile(),
+            notify: default_notify(),
         }
     }
 }
@@ -934,6 +940,11 @@ fn default_profile() -> Option<String> {
 /// Implicit profile membership when the `profiles` setting is omitted.
 fn default_profiles() -> Vec<String> {
     vec!["default".to_string()]
+}
+
+/// Desktop notifications are on unless `[daemon] notify = false`.
+fn default_notify() -> bool {
+    true
 }
 
 /// Expand a leading `~` and `$VAR` references; falls back to the input on error.

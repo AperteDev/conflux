@@ -350,6 +350,47 @@ impl Form {
         row
     }
 
+    /// An on/off setting; turned back to `default`, it is removed from the file.
+    pub fn switch(
+        self: &Rc<Self>,
+        title: &str,
+        subtitle: &str,
+        key: &'static str,
+        current: Option<String>,
+        default: bool,
+    ) -> adw::SwitchRow {
+        let on = current.as_deref().map_or(default, |v| v == "true");
+        let row = adw::SwitchRow::builder()
+            .title(title)
+            .subtitle(subtitle)
+            .use_markup(false)
+            .active(on)
+            .sensitive(self.editable)
+            .build();
+        let quiet = Rc::new(Cell::new(false));
+        let form = self.clone();
+        row.connect_active_notify(move |row| {
+            if quiet.get() {
+                return;
+            }
+            let (section, on) = (form.section, row.is_active());
+            let edit: Edit = if on == default {
+                Box::new(move |doc: &mut ConfigDoc| doc.unset(section, key).map(|_| ()))
+            } else {
+                Box::new(move |doc: &mut ConfigDoc| doc.set(section, key, on))
+            };
+            let (row, quiet) = (row.clone(), quiet.clone());
+            form.commit(edit, move |ok| {
+                if !ok {
+                    quiet.set(true);
+                    row.set_active(!on);
+                    quiet.set(false);
+                }
+            });
+        });
+        row
+    }
+
     /// A list setting as a group of its own: one row per item, with a button to
     /// remove it, and an entry to add one. When the list ends up equal to
     /// `default`, the setting is removed from the file instead.

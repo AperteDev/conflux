@@ -65,3 +65,106 @@ impl Error {
 
 /// Convenience result alias for the core library.
 pub type Result<T> = std::result::Result<T, Error>;
+
+/// Why a sync failed, in a few words, from its error message: for a UI or a
+/// notification, next to the whole message. Errors it knows read as their kind
+/// ("Can't reach the server"); any other as its first clause, without the
+/// "backend error:" in front.
+pub fn reason(message: &str) -> String {
+    let lower = message.to_lowercase();
+    let has = |needles: &[&str]| needles.iter().any(|n| lower.contains(n));
+    let known = if has(&["password_command"]) {
+        Some("The password command failed")
+    } else if has(&["certificate", "unknownissuer"]) {
+        Some("The server's certificate is not trusted")
+    } else if has(&[
+        "401",
+        "unauthorized",
+        "authentication required",
+        "authentication replays",
+        "no more ssh credentials",
+        "permission denied (publickey",
+    ]) {
+        Some("The server refused the login")
+    } else if has(&["403 forbidden"]) {
+        Some("The server denied access")
+    } else if has(&["507", "insufficient storage"]) {
+        Some("The server is out of space")
+    } else if has(&["no space left on device"]) {
+        Some("The disk is full")
+    } else if has(&[
+        "connection refused",
+        "failed to lookup address",
+        "name or service not known",
+        "failed to resolve address",
+        "could not resolve",
+        "temporary failure in name resolution",
+        "network is unreachable",
+        "no route to host",
+        "timed out",
+        "failed to connect",
+        "error sending request",
+    ]) {
+        Some("Can't reach the server")
+    } else if has(&["404 not found", "status code: 404", "repository not found"]) {
+        Some("Not found on the server")
+    } else {
+        None
+    };
+    if let Some(reason) = known {
+        return reason.to_string();
+    }
+    let rest = message.strip_prefix("backend error: ").unwrap_or(message);
+    let first = rest.split("; ").next().unwrap_or(rest).trim();
+    let mut chars = first.chars();
+    match chars.next() {
+        Some(c) => c.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn errors_read_as_their_reason() {
+        for (message, expected) in [
+            (
+                "backend error: webdav request failed: error sending request for url \
+                 (http://127.0.0.1:9/dav/): Connection refused (os error 111)",
+                "Can't reach the server",
+            ),
+            (
+                "backend error: git fetch failed: failed to resolve address for host: Name \
+                 or service not known; class=Net (12)",
+                "Can't reach the server",
+            ),
+            (
+                "backend error: PROPFIND failed: 401 Unauthorized",
+                "The server refused the login",
+            ),
+            (
+                "backend error: webdav request failed: error sending request for url \
+                 (https://x/): invalid peer certificate: UnknownIssuer",
+                "The server's certificate is not trusted",
+            ),
+            (
+                "backend error: password_command exited with exit status: 1",
+                "The password command failed",
+            ),
+            (
+                "branch `master` has no upstream to sync with, so conflux has nothing to \
+                 fetch from or push to; set one with `git push -u origin master`",
+                "Branch `master` has no upstream to sync with, so conflux has nothing to \
+                 fetch from or push to",
+            ),
+            (
+                "backend error: PUT a.txt failed: 500",
+                "PUT a.txt failed: 500",
+            ),
+        ] {
+            assert_eq!(reason(message), expected, "{message}");
+        }
+    }
+}

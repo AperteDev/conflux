@@ -29,6 +29,8 @@ use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, warn};
 
+use crate::notify::{Notifier, Ran};
+
 /// Runtime status recorded per group (merged with static config for IPC).
 #[derive(Default, Clone)]
 struct RuntimeStatus {
@@ -200,12 +202,16 @@ async fn run_async(config: Config, paths: Paths, system: bool) -> anyhow::Result
         queued: Arc::new(Mutex::new(HashMap::new())),
     };
 
+    // A system daemon has no desktop session to notify.
+    let notifier = (!system).then(Notifier::new);
+
     // Single worker: drains the job queue, one sync at a time.
     tokio::spawn(worker_loop(
         state.clone(),
         sync_lock.clone(),
         rx,
         submit.queued.clone(),
+        notifier.clone(),
     ));
 
     let mut triggers = spawn_triggers(&state, &submit);
@@ -240,6 +246,7 @@ async fn run_async(config: Config, paths: Paths, system: bool) -> anyhow::Result
         listener,
         reload_tx.clone(),
         Access::for_mode(system),
+        notifier,
     ));
 
     info!(socket = %socket_path.display(), "conflux daemon started");
@@ -285,36 +292,62 @@ async fn worker_loop(
     sync_lock: Arc<tokio::sync::Mutex<()>>,
     mut rx: mpsc::UnboundedReceiver<String>,
     queued: Arc<Mutex<HashMap<String, bool>>>,
+    notifier: Option<Arc<Notifier>>,
 ) {
     while let Some(label) = rx.recv().await {
         // A job queued only via `pull_interval` runs as a remote refresh.
         let remote_refresh = queued.lock().unwrap().remove(&label).unwrap_or(false);
 
         // One attempt plus RETRY_BACKOFF.len() retries.
+        let mut last = None;
         for attempt in 0..=RETRY_BACKOFF.len() {
-            match run_one(&state, &sync_lock, &label, remote_refresh).await {
-                Some(run) if run.outcome.error.is_some() => {
-                    let err = run.outcome.error.unwrap();
-                    // Some failures are waiting on the user — a `git_repo` that is
-                    // not a clone, a conflict to resolve. Retrying those would only
-                    // repeat the same message three times, so report once and move
-                    // on; the next trigger will pick the group up again.
-                    if !run.retryable {
-                        error!(group = %label, "sync cannot proceed: {err}");
-                        break;
-                    }
-                    if let Some(delay) = RETRY_BACKOFF.get(attempt) {
-                        warn!(group = %label, "sync failed, retrying in {delay:?}: {err}");
-                        tokio::time::sleep(*delay).await;
-                    } else {
-                        error!(group = %label, "sync failed after retries: {err}");
-                    }
-                }
-                // Success or the group no longer exists — stop retrying.
-                _ => break,
+            last = run_one(&state, &sync_lock, &label, remote_refresh).await;
+            let Some(run) = &last else {
+                // The group no longer exists.
+                break;
+            };
+            let Some(err) = &run.outcome.error else {
+                break;
+            };
+            // Some failures are waiting on the user — a `git_repo` that is
+            // not a clone, a conflict to resolve. Retrying those would only
+            // repeat the same message three times, so report once and move
+            // on; the next trigger will pick the group up again.
+            if !run.retryable {
+                error!(group = %label, "sync cannot proceed: {err}");
+                break;
+            }
+            if let Some(delay) = RETRY_BACKOFF.get(attempt) {
+                warn!(group = %label, "sync failed, retrying in {delay:?}: {err}");
+                tokio::time::sleep(*delay).await;
+            } else {
+                error!(group = %label, "sync failed after retries: {err}");
             }
         }
+        if let (Some(notifier), Some(run)) = (&notifier, &last) {
+            notify_ran(&state, notifier, &run.outcome, false).await;
+        }
     }
+}
+
+/// Tell `notifier` how a run of a group went; `asked` when someone asked for
+/// it and sees the outcome.
+async fn notify_ran(state: &Shared, notifier: &Arc<Notifier>, outcome: &GroupOutcome, asked: bool) {
+    let (title, notify) = {
+        let st = state.lock().unwrap();
+        let title = resolve(&st, &outcome.label)
+            .and_then(|(sync, _, _)| sync.label.or(sync.id))
+            .unwrap_or_else(|| outcome.label.clone());
+        (title, st.config.daemon.notify)
+    };
+    let ran = match (&outcome.error, &outcome.summary) {
+        (Some(error), _) => Ran::Failed(error),
+        (None, Some(summary)) => Ran::Synced(summary),
+        (None, None) => return,
+    };
+    notifier
+        .ran(&outcome.label, &title, ran, notify, asked)
+        .await;
 }
 
 /// One sync attempt: what to report over IPC, plus whether trying again could
@@ -673,6 +706,7 @@ async fn serve_ipc(
     listener: UnixListener,
     reload_tx: mpsc::UnboundedSender<oneshot::Sender<(bool, String)>>,
     access: Access,
+    notifier: Option<Arc<Notifier>>,
 ) {
     loop {
         match listener.accept().await {
@@ -681,10 +715,16 @@ async fn serve_ipc(
                 let sync_lock = sync_lock.clone();
                 let submit = submit.clone();
                 let reload_tx = reload_tx.clone();
+                let notifier = notifier.clone();
                 tokio::spawn(async move {
-                    if let Err(e) =
-                        handle_conn(stream, &state, &sync_lock, &submit, &reload_tx, access).await
-                    {
+                    let conn = Conn {
+                        state: &state,
+                        sync_lock: &sync_lock,
+                        submit: &submit,
+                        reload_tx: &reload_tx,
+                        notifier: notifier.as_ref(),
+                    };
+                    if let Err(e) = handle_conn(stream, conn, access).await {
                         warn!("ipc connection error: {e}");
                     }
                 });
@@ -696,14 +736,23 @@ async fn serve_ipc(
     }
 }
 
-async fn handle_conn(
-    stream: UnixStream,
-    state: &Shared,
-    sync_lock: &Arc<tokio::sync::Mutex<()>>,
-    submit: &Submitter,
-    reload_tx: &mpsc::UnboundedSender<oneshot::Sender<(bool, String)>>,
-    access: Access,
-) -> anyhow::Result<()> {
+/// What a connection's requests act on.
+struct Conn<'a> {
+    state: &'a Shared,
+    sync_lock: &'a Arc<tokio::sync::Mutex<()>>,
+    submit: &'a Submitter,
+    reload_tx: &'a mpsc::UnboundedSender<oneshot::Sender<(bool, String)>>,
+    notifier: Option<&'a Arc<Notifier>>,
+}
+
+async fn handle_conn(stream: UnixStream, conn: Conn<'_>, access: Access) -> anyhow::Result<()> {
+    let Conn {
+        state,
+        sync_lock,
+        submit,
+        reload_tx,
+        notifier,
+    } = conn;
     let allowed = access.allows(&stream);
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
@@ -731,6 +780,11 @@ async fn handle_conn(
                 for label in labels {
                     // Manual `conflux sync` always runs a full bidirectional sync.
                     if let Some(run) = run_one(state, sync_lock, &label, false).await {
+                        // Whoever asked sees how it went; a failure notified
+                        // before is withdrawn if it works now.
+                        if let Some(notifier) = notifier {
+                            notify_ran(state, notifier, &run.outcome, true).await;
+                        }
                         outcomes.push(run.outcome);
                     }
                 }

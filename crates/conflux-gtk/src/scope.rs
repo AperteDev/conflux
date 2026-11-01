@@ -12,6 +12,7 @@ use std::rc::Rc;
 use adw::prelude::*;
 use conflux_core::config::LintKind;
 use conflux_core::config_edit::{toml_edit, Section};
+use conflux_core::error;
 use conflux_core::helper::{HelperRequest, HelperResponse, UnitAction};
 use conflux_core::ipc::{client, GroupStatus, Request, Response, SyncTarget};
 use conflux_core::model::RemoteKind;
@@ -271,6 +272,23 @@ impl ScopeView {
     /// Pages built before now must not edit by position any more.
     pub fn bump_generation(&self) {
         self.generation.set(self.generation.get() + 1);
+    }
+
+    /// Open the page of the sync the daemon calls `label`; whether there is one.
+    pub fn open_sync(self: &Rc<Self>, label: &str) -> bool {
+        let Some(snapshot) = self.snapshot() else {
+            return false;
+        };
+        let ConfigState::Loaded(loaded) = &snapshot.config else {
+            return false;
+        };
+        let Some(index) = (0..loaded.raw.syncs.len()).find(|&i| loaded.label(i) == label) else {
+            return false;
+        };
+        self.ctx
+            .nav
+            .push(&detail::sync_page(self, &snapshot, index));
+        true
     }
 
     /// Keep `show` up to date with the status of the sync with `label` (or
@@ -1089,9 +1107,9 @@ impl ScopeView {
                 Some(_) if busy => "Syncing…".to_string(),
                 Some((_, g)) => match (&g.last_error, g.last_run, &g.last_summary) {
                     (Some(e), Some(t), _) => {
-                        format!("Failed {}: {}", model::ago(t, now), text::error_reason(e))
+                        format!("Failed {}: {}", model::ago(t, now), error::reason(e))
                     }
-                    (Some(e), None, _) => format!("Failed: {}", text::error_reason(e)),
+                    (Some(e), None, _) => format!("Failed: {}", error::reason(e)),
                     (None, Some(t), Some(s)) => {
                         format!("Synced {}, {}", model::ago(t, now), model::summary_text(s))
                     }
@@ -1202,7 +1220,7 @@ impl ScopeView {
                     Ok(Response::Synced(outcomes)) => {
                         failed.extend(outcomes.into_iter().filter_map(|o| {
                             o.error
-                                .map(|e| format!("{}: {}", o.label, text::error_reason(&e)))
+                                .map(|e| format!("{}: {}", o.label, error::reason(&e)))
                         }))
                     }
                     Ok(Response::Error(e)) | Err(e) => failed.push(e),
@@ -1423,7 +1441,7 @@ fn sync_outcome(title: &str, result: Result<Response, String>) -> String {
     match result {
         Ok(Response::Synced(outcomes)) => match outcomes.first() {
             Some(o) => match (&o.summary, &o.error) {
-                (_, Some(e)) => format!("{title} failed: {}", text::error_reason(e)),
+                (_, Some(e)) => format!("{title} failed: {}", error::reason(e)),
                 (Some(s), None) => format!("Synced {title}: {}", model::summary_text(s)),
                 (None, None) => format!("Synced {title}"),
             },

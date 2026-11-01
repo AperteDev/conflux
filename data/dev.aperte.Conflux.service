@@ -1,0 +1,3 @@
+[D-BUS Service]
+Name=dev.aperte.Conflux
+Exec=/usr/bin/conflux-gtk --gapplication-service

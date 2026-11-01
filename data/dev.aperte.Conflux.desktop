@@ -8,3 +8,4 @@ Type=Application
 Categories=Utility;FileTools;
 Keywords=sync;synchronize;backup;mirror;nextcloud;webdav;git;dotfiles;
 StartupNotify=true
+DBusActivatable=true

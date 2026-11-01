@@ -118,6 +118,16 @@ The profile the daemon runs, unless
 names one.
 Default
 .BR default .
+.TP
+.B notify
+.RB ( true " or " false )
+Whether a user daemon shows desktop notifications: when a sync fails
+(once, after its retries, until it works again) and when a sync leaves
+conflict copies.
+Clicking one opens the Conflux app at that sync.
+A system daemon never notifies.
+Default
+.BR true .
 .PP
 The rest are defaults, which a sync's own setting overrides; for
 .B pull_interval

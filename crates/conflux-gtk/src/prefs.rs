@@ -10,7 +10,7 @@ use conflux_core::model::{Deletions, EmptyDirMode};
 
 use crate::detail::{group, options};
 use crate::form::{self, Form, Kind, Toaster};
-use crate::model::ConfigState;
+use crate::model::{ConfigState, Scope};
 use crate::scope::ScopeView;
 use crate::text;
 
@@ -47,34 +47,46 @@ pub fn show(view: &Rc<ScopeView>) {
     if !form.editable() {
         page.set_description("Unlock to change the system configuration");
     }
-    page.add(&group(
-        "Daemon",
-        &[
-            form.choice(
-                "Log level",
-                "log_level",
-                options(&[
-                    (Some("error"), "Errors"),
-                    (Some("warn"), "Warnings"),
-                    (Some("info"), "Information"),
-                    (Some("debug"), "Debugging"),
-                    (Some("trace"), "Everything"),
-                ]),
-                w("log_level"),
-                Some("info"),
+    let mut rows: Vec<gtk::Widget> = vec![
+        form.choice(
+            "Log level",
+            "log_level",
+            options(&[
+                (Some("error"), "Errors"),
+                (Some("warn"), "Warnings"),
+                (Some("info"), "Information"),
+                (Some("debug"), "Debugging"),
+                (Some("trace"), "Everything"),
+            ]),
+            w("log_level"),
+            Some("info"),
+        )
+        .upcast(),
+        form.entry(
+            "Profile run by the plain unit",
+            "profile",
+            w("profile"),
+            Kind::Text,
+            Some("default"),
+            false,
+        )
+        .upcast(),
+    ];
+    // A system daemon has no desktop session to notify.
+    if view.scope == Scope::User {
+        rows.push(
+            form.switch(
+                "Notifications",
+                "When a sync fails, or leaves conflict copies",
+                "notify",
+                w("notify"),
+                true,
             )
-            .upcast_ref(),
-            form.entry(
-                "Profile run by the plain unit",
-                "profile",
-                w("profile"),
-                Kind::Text,
-                Some("default"),
-                false,
-            )
-            .upcast_ref(),
-        ],
-    ));
+            .upcast(),
+        );
+    }
+    let rows: Vec<&gtk::Widget> = rows.iter().collect();
+    page.add(&group("Daemon", &rows));
 
     let defaults = group(
         "Defaults for Syncs",

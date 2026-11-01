@@ -221,8 +221,10 @@ are not applied.
 
 ### Option reference
 
-`[daemon]` holds `log_level`, the active `profile`, and the defaults every group
-inherits: `debounce`, `interval`, `pull_interval`, `empty_dirs`, `deletions`,
+`[daemon]` holds `log_level`, the active `profile`, `notify` (desktop
+notifications from a user daemon, on by default; see
+[Notifications](#notifications)), and the defaults every group inherits:
+`debounce`, `interval`, `pull_interval`, `empty_dirs`, `deletions`,
 `max_file_size`, and `exclude` (which defaults to `.git`, `.svn`, `.hg`,
 `.DS_Store`, `Thumbs.db`, `*.swp` and is *added to* each group's own `exclude`).
 
@@ -324,6 +326,17 @@ preview a brand-new group, which the daemon already synced at startup. To vet a
 new group's direction and filters, bring it up in a throwaway setup first: point
 `--config` at a temp file whose group uses a scratch directory or a `filesystem`
 remote, run `conflux daemon` in the foreground, edit files, and watch `-n`.
+
+### Notifications
+
+A user daemon shows a desktop notification when a sync fails, once its retries
+are spent: just once, saying why in a few words ("Can't reach the server"), until
+the sync works again, which withdraws it. It also shows one when a sync leaves
+conflict copies. A sync you run yourself (`conflux sync`, Sync Now) notifies
+nothing, as you see how it went. Clicking a notification opens the app at that
+sync, starting it if need be. `[daemon] notify = false` (or the Notifications
+switch in the app's Preferences) turns them off; a system daemon has no desktop
+session and never notifies.
 
 ## The app
 

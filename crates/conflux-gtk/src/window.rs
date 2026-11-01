@@ -50,10 +50,39 @@ pub struct Window {
     ctx: Rc<Ctx>,
     closed: Cell<bool>,
     scope_toggle: adw::ToggleGroup,
+    views: adw::ViewStack,
     banner: adw::Banner,
     lock_banner: adw::Banner,
     user: Rc<ScopeView>,
     system: Rc<ScopeView>,
+    /// The label of a user sync to open once the user's scope is shown.
+    show_sync: RefCell<Option<String>>,
+}
+
+thread_local! {
+    /// The open window, for the app's actions.
+    static WINDOW: RefCell<Weak<Window>> = const { RefCell::new(Weak::new()) };
+}
+
+/// Open the page of the user's sync with `label`, opening the window first if
+/// need be.
+pub fn show_sync(app: &adw::Application, label: &str) {
+    if app.active_window().is_none() {
+        open(app);
+    }
+    let Some(win) = WINDOW.with(|w| w.borrow().upgrade()) else {
+        return;
+    };
+    *win.show_sync.borrow_mut() = Some(label.to_string());
+    win.ctx.nav.pop_to_tag("main");
+    win.views.set_visible_child_name("syncs");
+    if win.scope() != Scope::User {
+        // Shows the scope, which then opens the sync.
+        win.scope_toggle.set_active_name(Some(Scope::User.name()));
+    } else {
+        win.open_pending_sync();
+    }
+    win.ctx.window.present();
 }
 
 pub fn open(app: &adw::Application) {
@@ -79,12 +108,15 @@ pub fn open(app: &adw::Application) {
         user: ScopeView::new(Scope::User, ctx.clone(), &syncs, &remotes),
         system: ScopeView::new(Scope::System, ctx.clone(), &syncs, &remotes),
         scope_toggle: ui::get(&b, "scope"),
+        views: ui::get(&b, "views"),
         banner: ui::get(&b, "banner"),
         lock_banner: ui::get(&b, "lock_banner"),
         closed: Cell::new(false),
+        show_sync: RefCell::default(),
         ctx,
     });
     *win.ctx.win.borrow_mut() = Rc::downgrade(&win);
+    WINDOW.with(|w| *w.borrow_mut() = Rc::downgrade(&win));
 
     let weak = Rc::downgrade(&win);
     win.scope_toggle.connect_active_name_notify(move |_| {
@@ -165,9 +197,22 @@ impl Window {
         self.refresh();
     }
 
+    /// Open the sync `show_sync` asked for, once the user's scope has loaded.
+    fn open_pending_sync(&self) {
+        if self.scope() != Scope::User || self.user.snapshot().is_none() {
+            return;
+        }
+        if let Some(label) = self.show_sync.borrow_mut().take() {
+            if !self.user.open_sync(&label) {
+                self.ctx.toast("That sync is no longer in the config");
+            }
+        }
+    }
+
     /// Follow the shown scope: its config's problem in the banner, and what can
     /// be added or set.
     fn show_state(&self) {
+        self.open_pending_sync();
         self.show_problem();
         let view = self.view(self.scope());
         // Like Settings' Printers: the system's settings are locked until unlocked.
