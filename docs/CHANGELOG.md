@@ -9,8 +9,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - Conflux (`conflux-gtk`), a GTK (libadwaita) app: the syncs, remotes and daemons of the user
-  and the system, live sync status, where each setting comes from,
-  Sync Now and dry runs. It edits the user's config: every setting of a sync, a remote and
+  and the system, live sync status, where each setting comes from, the config's warnings in
+  plain words (with a fix where there is one), Sync Now and dry runs. It edits the user's config: every setting of a sync, a remote and
   `[daemon]`, adding and deleting syncs and remotes, and starting a config from the example.
   Edits change only the lines they touch, keep comments, are checked the way the daemon
   checks them, and are reloaded by the running daemons. It manages the user's daemons too:

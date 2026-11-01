@@ -332,7 +332,9 @@ config and daemons; the config file stays the source of truth, and nothing needs
 the app.
 It shows the syncs, remotes and daemons of your user and of the system, with each
 sync's live status and where each setting comes from, and it can run a sync or a
-dry run.
+dry run. Settings that are valid but probably a mistake (a sync that includes
+nothing, a git sync that never fetches) are pointed out on the Syncs page, with
+a button that fixes them where one can.
 
 It edits your own config: every setting of a sync, a remote and `[daemon]`
 (Preferences), and it adds and deletes syncs and remotes. An edit changes only the

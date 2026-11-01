@@ -3,7 +3,7 @@
 use std::path::Path;
 use std::time::Duration;
 
-use conflux_core::config::{DaemonConfig, Sync};
+use conflux_core::config::{DaemonConfig, LintKind, Sync};
 use conflux_core::model::{Deletions, EmptyDirMode, RemoteKind, Scope as SyncScope, Trigger};
 
 use crate::model::Scope;
@@ -109,6 +109,40 @@ pub fn deletions(d: Deletions) -> &'static str {
     }
 }
 
+/// What a config warning about `sync` means, in plain words.
+pub fn lint(scope: Scope, kind: LintKind, sync: &Sync) -> String {
+    match kind {
+        LintKind::EmptyInclude => {
+            "Syncs nothing: it syncs only the paths it includes, and it includes none".to_string()
+        }
+        LintKind::NeverFetches => "Never fetches what other computers push: it has no pull \
+                                   interval, and it does not run on a timer"
+            .to_string(),
+        LintKind::CloneMissing => format!(
+            "Its git clone {} does not exist; clone the repository there first",
+            path(scope, &sync.local)
+        ),
+        LintKind::NotAClone => format!(
+            "{} is not a git clone; clone the repository there first",
+            path(scope, &sync.local)
+        ),
+        LintKind::LocalIsAClone => format!(
+            "{} is a git clone, but this sync copies files into it and leaves its history \
+             behind; to keep the clone itself in sync, add a git clone sync instead",
+            path(scope, &sync.local)
+        ),
+    }
+}
+
+/// The label of the button fixing a config warning, when one can.
+pub fn lint_fix(kind: LintKind) -> Option<&'static str> {
+    match kind {
+        LintKind::EmptyInclude => Some("Sync Everything"),
+        LintKind::NeverFetches => Some("Fetch Every 5 min"),
+        _ => None,
+    }
+}
+
 pub fn empty_dirs(mode: EmptyDirMode) -> &'static str {
     match mode {
         EmptyDirMode::Ignore => "Ignore",
@@ -158,6 +192,29 @@ mod tests {
         let s = sync("remote = \"r\"\nlocal = \"/a\"\ntrigger = \"timer\"\ninterval = \"15m\"");
         assert_eq!(trigger(&s, &daemon), "Every 15m");
         assert_eq!(duration(Duration::ZERO), "off");
+    }
+
+    #[test]
+    fn warnings_read_plainly_with_their_fix() {
+        let config = Config::from_toml_str(
+            "[[sync]]\nremote_fs = \"/b\"\nlocal = \"/a\"\n\n\
+             [[sync]]\ngit_repo = \"/nonexistent/notes\"\npull_interval = \"0s\"\n",
+        )
+        .unwrap();
+        let lints = config.lints();
+        let kinds: Vec<_> = lints.iter().map(|l| (l.sync, l.kind)).collect();
+        assert_eq!(
+            kinds,
+            [
+                (0, LintKind::EmptyInclude),
+                (1, LintKind::NeverFetches),
+                (1, LintKind::CloneMissing)
+            ]
+        );
+        let text = lint(Scope::User, LintKind::CloneMissing, &config.syncs[1]);
+        assert!(text.starts_with("Its git clone /nonexistent/notes does not exist"));
+        assert_eq!(lint_fix(LintKind::EmptyInclude), Some("Sync Everything"));
+        assert_eq!(lint_fix(LintKind::NotAClone), None);
     }
 
     #[test]

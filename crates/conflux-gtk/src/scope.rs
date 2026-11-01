@@ -10,6 +10,8 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use adw::prelude::*;
+use conflux_core::config::LintKind;
+use conflux_core::config_edit::{toml_edit, Section};
 use conflux_core::helper::{HelperRequest, HelperResponse, UnitAction};
 use conflux_core::ipc::{client, Request, Response, SyncTarget};
 use gtk::{gio, glib};
@@ -515,20 +517,81 @@ impl ScopeView {
         };
 
         let page = adw::PreferencesPage::new();
-        if !loaded.warnings.is_empty() {
-            let group = adw::PreferencesGroup::builder().title("Warnings").build();
-            for warning in &loaded.warnings {
-                let row = ui::row(warning, "");
-                row.set_title_selectable(true);
-                row.add_prefix(&ui::state_icon("dialog-warning-symbolic", "warning"));
-                group.add(&row);
-            }
-            page.add(&group);
+        if !loaded.lints.is_empty() {
+            page.add(&self.warnings_group(snapshot, loaded));
         }
         page.add(&self.daemons_group(snapshot));
         page.add(&self.syncs_group(snapshot, loaded));
         ui::replace_child(&self.syncs, "list", &page);
         ui::replace_child(&self.remotes, "list", &self.remotes_page(snapshot, loaded));
+    }
+
+    /// The config's warnings, one row per warning naming its sync, which it
+    /// opens, with a button for the fix when there is one.
+    fn warnings_group(
+        self: &Rc<Self>,
+        snapshot: &Rc<Snapshot>,
+        loaded: &Loaded,
+    ) -> adw::PreferencesGroup {
+        let group = adw::PreferencesGroup::builder().title("Warnings").build();
+        for lint in &loaded.lints {
+            let index = lint.sync;
+            let Some(sync) = loaded.raw.syncs.get(index) else {
+                continue;
+            };
+            let row = ui::row(
+                &text::sync_title(sync, &loaded.label(index)),
+                &text::lint(self.scope, lint.kind, sync),
+            );
+            row.set_subtitle_lines(0);
+            row.add_prefix(&ui::state_icon("dialog-warning-symbolic", "warning"));
+            if let Some(label) = text::lint_fix(lint.kind).filter(|_| self.editable()) {
+                let fix = gtk::Button::builder()
+                    .label(label)
+                    .valign(gtk::Align::Center)
+                    .build();
+                let (weak, kind) = (Rc::downgrade(self), lint.kind);
+                fix.connect_clicked(move |button| {
+                    if let Some(view) = weak.upgrade() {
+                        button.set_sensitive(false);
+                        view.fix_lint(index, kind, button);
+                    }
+                });
+                row.add_suffix(&fix);
+            }
+            row.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
+            row.set_activatable(true);
+            let (weak, snapshot) = (Rc::downgrade(self), snapshot.clone());
+            row.connect_activated(move |_| {
+                if let Some(view) = weak.upgrade() {
+                    let page = detail::sync_page(&view, &snapshot, index);
+                    view.ctx.nav.push(&page);
+                }
+            });
+            group.add(&row);
+        }
+        group
+    }
+
+    /// Fix the warning `kind` of the sync at `index` the way `text::lint_fix`
+    /// names; `button` comes back when that fails.
+    fn fix_lint(self: &Rc<Self>, index: usize, kind: LintKind, button: &gtk::Button) {
+        let section = Section::Sync(index);
+        let edit: Edit = match kind {
+            LintKind::EmptyInclude => Box::new(move |doc| {
+                let all: toml_edit::Array = ["**"].into_iter().collect();
+                doc.set(section, "include", all)
+            }),
+            LintKind::NeverFetches => Box::new(move |doc| doc.set(section, "pull_interval", "5m")),
+            _ => return,
+        };
+        let (ctx, button) = (self.ctx.clone(), button.clone());
+        self.edit(self.generation(), edit, move |result| {
+            if let Err(e) = result {
+                ctx.toast(&e);
+                button.set_sensitive(true);
+            }
+        });
     }
 
     fn daemons_group(self: &Rc<Self>, snapshot: &Rc<Snapshot>) -> adw::PreferencesGroup {

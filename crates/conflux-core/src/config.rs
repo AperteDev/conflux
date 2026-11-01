@@ -304,6 +304,34 @@ pub struct Sync {
     pub exclude: Vec<String>,
 }
 
+/// A condition of one sync that is valid but almost certainly a mistake, see
+/// [`Config::lints`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Lint {
+    /// The sync's position in [`Config::syncs`].
+    pub sync: usize,
+    /// What it is about.
+    pub kind: LintKind,
+    /// What is wrong and what to do, in the config's own terms.
+    pub message: String,
+}
+
+/// What a [`Lint`] is about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LintKind {
+    /// `scope = "include"` with an empty `include`: the sync syncs nothing.
+    EmptyInclude,
+    /// Git, but no `pull_interval` and no timer: commits pushed from another
+    /// host are never fetched.
+    NeverFetches,
+    /// `git_repo` names a directory that does not exist.
+    CloneMissing,
+    /// `git_repo` names a directory that is not a git clone.
+    NotAClone,
+    /// A file sync against a git remote whose local directory is a clone.
+    LocalIsAClone,
+}
+
 impl Config {
     /// Read, parse, normalize, and validate a config file.
     pub fn load(path: &Path) -> Result<Self> {
@@ -600,25 +628,41 @@ impl Config {
         Ok(())
     }
 
-    /// Non-fatal configuration lints: conditions that parse and validate fine
-    /// but are almost certainly mistakes. Returned as human-readable messages
-    /// for the caller to surface (the daemon logs them at startup; `conflux
-    /// config validate` prints them).
+    /// Non-fatal configuration lints as messages, for the caller to print (the
+    /// daemon logs them at startup; `conflux config validate` prints them). See
+    /// [`Config::lints`].
     pub fn warnings(&self) -> Vec<String> {
+        self.lints().into_iter().map(|l| l.message).collect()
+    }
+
+    /// Non-fatal configuration lints: conditions that parse and validate fine
+    /// but are almost certainly mistakes, each with the sync it is about, so a
+    /// UI can point at it and say it its own way.
+    pub fn lints(&self) -> Vec<Lint> {
         let mut out = Vec::new();
-        for sync in &self.syncs {
+        for (index, sync) in self.syncs.iter().enumerate() {
             let label = crate::engine::group_label(sync);
             let git_remote =
                 self.remote(sync.remote_id()).map(|r| r.backend) == Some(RemoteKind::Git);
+            let mut lint = |kind, message| {
+                out.push(Lint {
+                    sync: index,
+                    kind,
+                    message,
+                })
+            };
 
             // `scope = "include"` with no `include` globs matches nothing, so the
             // group is inert — likely an oversight rather than intent. (A
             // `git_repo` group has no scope at all.)
             if !sync.is_git_repo() && sync.scope() == Scope::Include && sync.include.is_empty() {
-                out.push(format!(
-                    "sync group `{label}` has scope = \"include\" but an empty `include`, so it \
-                     syncs nothing; add `include` globs or pick a different `scope`",
-                ));
+                lint(
+                    LintKind::EmptyInclude,
+                    format!(
+                        "sync group `{label}` has scope = \"include\" but an empty `include`, so \
+                         it syncs nothing; add `include` globs or pick a different `scope`",
+                    ),
+                );
             }
 
             // Neither a git remote nor a working clone can be watched for
@@ -629,29 +673,38 @@ impl Config {
                 && sync.trigger != Trigger::Timer
                 && self.pull_interval_for(sync).is_none_or(|d| d.is_zero())
             {
-                out.push(format!(
-                    "sync group `{label}` syncs with git but has no `pull_interval` and \
-                     trigger = \"{}\", so commits pushed from another host are never fetched; set \
-                     `pull_interval` or use trigger = \"timer\"",
-                    sync.trigger.as_str(),
-                ));
+                lint(
+                    LintKind::NeverFetches,
+                    format!(
+                        "sync group `{label}` syncs with git but has no `pull_interval` and \
+                         trigger = \"{}\", so commits pushed from another host are never \
+                         fetched; set `pull_interval` or use trigger = \"timer\"",
+                        sync.trigger.as_str(),
+                    ),
+                );
             }
 
             // A `git_repo` pointing somewhere that is not a clone fails on every
             // run. Only a warning, because one config can be shared across hosts
             // where the path may not exist yet.
             if sync.is_git_repo() && !sync.local.join(".git").exists() {
-                let what = if sync.local.exists() {
-                    "is not a git repository (no `.git` in it)"
+                let (kind, what) = if sync.local.exists() {
+                    (
+                        LintKind::NotAClone,
+                        "is not a git repository (no `.git` in it)",
+                    )
                 } else {
-                    "does not exist"
+                    (LintKind::CloneMissing, "does not exist")
                 };
-                out.push(format!(
-                    "sync group `{label}`: `git_repo` points at `{}`, which {what}; clone it first, \
-                     or use a `[[remote]]` + `local` sync if you meant to sync files into a plain \
-                     directory",
-                    sync.local.display(),
-                ));
+                lint(
+                    kind,
+                    format!(
+                        "sync group `{label}`: `git_repo` points at `{}`, which {what}; clone it \
+                         first, or use a `[[remote]]` + `local` sync if you meant to sync files \
+                         into a plain directory",
+                        sync.local.display(),
+                    ),
+                );
             }
 
             // A git remote reconciles files against conflux's own clone under the
@@ -659,15 +712,18 @@ impl Config {
             // overwriting the working tree around it. That is almost never what
             // someone pointing at a clone wants — `git_repo` is.
             if git_remote && sync.local.join(".git").exists() {
-                out.push(format!(
-                    "sync group `{label}`: the local directory `{}` is itself a git clone, but \
-                     this group syncs *files* against a `[[remote]]` — conflux keeps its own clone \
-                     under the state dir and excludes `.git`, so your clone's history and branch \
-                     are ignored while its working tree is overwritten. To keep the clone itself \
-                     up to date through git (commit, fetch, rebase, push), use a `git_repo` sync \
-                     instead",
-                    sync.local.display(),
-                ));
+                lint(
+                    LintKind::LocalIsAClone,
+                    format!(
+                        "sync group `{label}`: the local directory `{}` is itself a git clone, \
+                         but this group syncs *files* against a `[[remote]]` — conflux keeps its \
+                         own clone under the state dir and excludes `.git`, so your clone's \
+                         history and branch are ignored while its working tree is overwritten. \
+                         To keep the clone itself up to date through git (commit, fetch, rebase, \
+                         push), use a `git_repo` sync instead",
+                        sync.local.display(),
+                    ),
+                );
             }
         }
         out
@@ -1182,6 +1238,8 @@ mod tests {
         let warnings = cfg.warnings();
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].contains("syncs nothing"));
+        let lints = cfg.lints();
+        assert_eq!((lints[0].sync, lints[0].kind), (0, LintKind::EmptyInclude));
 
         // Giving it an `include` clears the warning.
         let cfg = Config::from_toml_str(&format!("{base}\ninclude = [\"nvim\"]")).unwrap();

@@ -256,7 +256,7 @@ data/                   .desktop, metainfo, icons, polkit policy, gresource
 
 What a walk through the app with a realistic config showed was missing:
 
-- [ ] **Plain warnings:** a config warning names its sync by its title and says what is wrong
+- [x] **Plain warnings:** a config warning names its sync by its title and says what is wrong
   in plain words, opens the sync, and offers the fix when there is one (an empty `include`:
   Sync Everything). Core gives the warnings as data (`Config::lints`), each with its sync;
   `warnings()` keeps the CLI's and the log's text.

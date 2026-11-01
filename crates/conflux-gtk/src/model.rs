@@ -7,7 +7,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use conflux_core::config::{Config, Sync};
+use conflux_core::config::{Config, Lint, Sync};
 use conflux_core::config_edit::ConfigDoc;
 use conflux_core::engine::{group_label, SyncSummary};
 use conflux_core::ipc::{client, DaemonInfo, GroupStatus, Request, Response};
@@ -82,7 +82,7 @@ pub struct Loaded {
     pub prepared: Option<Config>,
     /// Why the daemon would refuse the config, if it would.
     pub error: Option<String>,
-    pub warnings: Vec<String>,
+    pub lints: Vec<Lint>,
 }
 
 impl Loaded {
@@ -91,8 +91,8 @@ impl Loaded {
         let doc = ConfigDoc::parse(&text).map_err(|e| e.to_string())?;
         let error = Config::from_toml_str(&text).err().map(|e| e.to_string());
         let prepared = Config::parse_unvalidated(&text).ok();
-        let warnings = match (&error, &prepared) {
-            (None, Some(config)) => config.warnings(),
+        let lints = match (&error, &prepared) {
+            (None, Some(config)) => config.lints(),
             _ => Vec::new(),
         };
         Ok(Loaded {
@@ -101,7 +101,7 @@ impl Loaded {
             raw,
             prepared,
             error,
-            warnings,
+            lints,
         })
     }
 
