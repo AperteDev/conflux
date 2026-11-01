@@ -266,7 +266,7 @@ What a walk through the app with a realistic config showed was missing:
   DNS), which reqwest otherwise leaves out.
 - [x] **A sync's page acts:** Sync Now, Dry Run and Open Local Folder in its header (Delete in
   its menu), and its status follows the daemon live, the last sync as "3 min ago".
-- [ ] **Small fixes:** a remote's page opened with its Id selected for editing; long choices
+- [x] **Small fixes:** a remote's page opened with its Id selected for editing; long choices
   (Scope) were cut off, now shown under their title; a folder remote's path reads with `~`.
 - [ ] **Add Sync asks what and when:** both ways, only picked paths, upload only (`scope =
   "local"`) or download only (`scope = "remote"`), and the trigger; remotes by their label;

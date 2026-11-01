@@ -19,6 +19,9 @@ use crate::ui;
 /// Where a form shows what went wrong.
 pub type Toaster = Rc<dyn Fn(&str)>;
 
+/// Choices longer than this many characters are shown under their title.
+const LONG_CHOICE: usize = 24;
+
 /// What a text entry holds, deciding how its text is written.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -198,10 +201,13 @@ impl Form {
         unset_means: Option<&'static str>,
     ) -> adw::ComboRow {
         let labels: Vec<&str> = options.iter().map(|(_, label)| label.as_str()).collect();
+        // A long choice would be cut off next to the title: it goes under it.
+        let long = labels.iter().any(|l| l.chars().count() > LONG_CHOICE);
         let row = adw::ComboRow::builder()
             .title(title)
             .model(&gtk::StringList::new(&labels))
             .use_markup(false)
+            .use_subtitle(long)
             .sensitive(self.editable)
             .build();
         let values: Vec<Option<String>> = options.into_iter().map(|(v, _)| v).collect();

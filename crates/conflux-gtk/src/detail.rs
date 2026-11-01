@@ -93,6 +93,16 @@ pub fn page_with(
         .title(title)
         .child(&toolbar)
         .build();
+    // The view focuses the page's first focusable widget, which on a remote's
+    // page is its Id: in an entry, all of its text selected, as if to replace.
+    nav_page.connect_shown(|page| {
+        if let Some(root) = page.root() {
+            if let Some(text) = root.focus().and_downcast::<gtk::Editable>() {
+                text.select_region(0, 0);
+            }
+            root.set_focus(None::<&gtk::Widget>);
+        }
+    });
     view.watch_page(&banner);
     let nav = view.ctx().nav.clone();
     banner.connect_button_clicked(move |_| {

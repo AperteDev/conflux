@@ -6,7 +6,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashSet, VecDeque};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use adw::prelude::*;
@@ -14,6 +14,7 @@ use conflux_core::config::LintKind;
 use conflux_core::config_edit::{toml_edit, Section};
 use conflux_core::helper::{HelperRequest, HelperResponse, UnitAction};
 use conflux_core::ipc::{client, GroupStatus, Request, Response, SyncTarget};
+use conflux_core::model::RemoteKind;
 use gtk::{gio, glib};
 
 use crate::editor::{self, Edit, EditError};
@@ -929,9 +930,13 @@ impl ScopeView {
         }
         for (index, remote) in loaded.raw.remotes.iter().enumerate() {
             let title = remote.label.clone().unwrap_or_else(|| remote.id.clone());
+            let location = match remote.backend {
+                RemoteKind::Filesystem => text::path(self.scope, Path::new(&remote.url)),
+                _ => remote.url.clone(),
+            };
             let row = ui::row(
                 &title,
-                &format!("{} · {}", text::backend(remote.backend), remote.url),
+                &format!("{} · {location}", text::backend(remote.backend)),
             );
             row.add_prefix(&gtk::Image::from_icon_name(text::backend_icon(
                 remote.backend,
