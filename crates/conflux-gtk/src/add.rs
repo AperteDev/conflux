@@ -8,9 +8,11 @@ use adw::prelude::*;
 use conflux_core::config_edit::{toml_edit, Entry};
 use conflux_core::Config;
 
+use gtk::{gio, glib};
+
 use crate::model::{ConfigState, Scope};
 use crate::scope::ScopeView;
-use crate::{detail, ui};
+use crate::{detail, keyring, ui};
 
 /// A dialog with Cancel and Add, a banner for what is wrong, and `page`.
 pub fn dialog(title: &str, page: &adw::PreferencesPage) -> (adw::Dialog, gtk::Button, adw::Banner) {
@@ -345,6 +347,12 @@ fn add_remote_then(view: &Rc<ScopeView>, added: impl Fn(String, String) + 'stati
         .build();
     let url = entry("URL");
     let username = entry("Username (optional)");
+    // A password goes to the keyring when it can, or else on the remote's page.
+    let password = keyring::available(view.scope).then(|| {
+        adw::PasswordEntryRow::builder()
+            .title("Password, saved in the keyring (optional)")
+            .build()
+    });
     let password_command = entry("Password command, e.g. secret-tool lookup ... (optional)");
     let branch = entry("Branch (empty: the remote's default)");
 
@@ -357,17 +365,18 @@ fn add_remote_then(view: &Rc<ScopeView>, added: impl Fn(String, String) + 'stati
     ] {
         general.add(row);
     }
-    let auth = adw::PreferencesGroup::builder()
-        .title("Connection")
-        .description("A password can also be set on the remote's page after adding it")
-        .build();
-    for row in [
-        username.upcast_ref::<gtk::Widget>(),
-        password_command.upcast_ref(),
-        branch.upcast_ref(),
-    ] {
-        auth.add(row);
+    let auth = adw::PreferencesGroup::builder().title("Connection").build();
+    if password.is_none() {
+        auth.set_description(Some(
+            "A password can also be set on the remote's page after adding it",
+        ));
     }
+    auth.add(&username);
+    if let Some(password) = &password {
+        auth.add(password);
+    }
+    auth.add(&password_command);
+    auth.add(&branch);
     let page = adw::PreferencesPage::new();
     page.add(&general);
     page.add(&auth);
@@ -392,6 +401,7 @@ fn add_remote_then(view: &Rc<ScopeView>, added: impl Fn(String, String) + 'stati
         backend,
         url,
         username,
+        password,
         password_command,
         branch,
     });
@@ -416,6 +426,14 @@ fn add_remote_then(view: &Rc<ScopeView>, added: impl Fn(String, String) + 'stati
                     .and_then(|mut c| c.remotes.pop())
                     .ok_or("This remote cannot be read")
             });
+            // A password for the keyring is not in it yet: tested as typed.
+            let remote = remote.map(|mut remote| {
+                if let Some(password) = fields.password() {
+                    remote.password_command = None;
+                    remote.password = Some(password);
+                }
+                remote
+            });
             match remote {
                 Ok(remote) => detail::test_connection(&view, remote, row),
                 Err(why) => refuse(&banner, why),
@@ -436,15 +454,37 @@ fn add_remote_then(view: &Rc<ScopeView>, added: impl Fn(String, String) + 'stati
         let (added, new_id) = (added.clone(), text(&fields.id));
         let label = text(&fields.label);
         let name = remote_name(&new_id, Some(label).filter(|l| !l.is_empty()).as_deref());
-        add(
-            &view,
-            &dialog,
-            &banner,
-            Entry::Remote,
-            table,
-            "Added the remote",
-            move || added(new_id, name),
-        );
+        let Some(password) = fields.password() else {
+            return add(
+                &view,
+                &dialog,
+                &banner,
+                Entry::Remote,
+                table,
+                "Added the remote",
+                move || added(new_id, name),
+            );
+        };
+        // The password goes to the keyring first; the remote then reads it.
+        let (view, banner) = (view.clone(), banner.clone());
+        glib::spawn_future_local(async move {
+            let key = new_id.clone();
+            let stored = gio::spawn_blocking(move || keyring::store(&key, &password))
+                .await
+                .expect("storing the password panicked");
+            match stored {
+                Ok(()) => add(
+                    &view,
+                    &dialog,
+                    &banner,
+                    Entry::Remote,
+                    table,
+                    "Added the remote, its password in the keyring",
+                    move || added(new_id, name),
+                ),
+                Err(e) => refuse(&banner, &e),
+            }
+        });
     });
     dialog.present(Some(&window));
 }
@@ -456,18 +496,30 @@ struct RemoteFields {
     backend: adw::ComboRow,
     url: adw::EntryRow,
     username: adw::EntryRow,
+    /// For the keyring, when the app can keep one there.
+    password: Option<adw::PasswordEntryRow>,
     password_command: adw::EntryRow,
     branch: adw::EntryRow,
 }
 
 impl RemoteFields {
-    /// The `[[remote]]` the rows describe, or what is missing.
+    /// The password typed for the keyring, if any, for a remote that takes one.
+    fn password(&self) -> Option<String> {
+        let password = self.password.as_ref()?.text().to_string();
+        (!password.is_empty() && self.backend.selected() != 2).then_some(password)
+    }
+
+    /// The `[[remote]]` the rows describe, or what is missing. A password for
+    /// the keyring is written as the command reading it back.
     fn table(&self) -> Result<toml_edit::Table, &'static str> {
         if text(&self.id).is_empty() {
             return Err("Give the remote an id");
         }
         if text(&self.url).is_empty() {
             return Err("Fill in where the remote is");
+        }
+        if self.password().is_some() && !text(&self.password_command).is_empty() {
+            return Err("Give either a password or a password command");
         }
         let b = self.backend.selected();
         let mut table = toml_edit::Table::new();
@@ -486,6 +538,10 @@ impl RemoteFields {
                 if !text(row).is_empty() {
                     table.insert(key, toml_edit::value(text(row)));
                 }
+            }
+            if self.password().is_some() {
+                let command = keyring::lookup_command(&text(&self.id));
+                table.insert("password_command", toml_edit::value(command));
             }
         }
         if b == 1 && !text(&self.branch).is_empty() {

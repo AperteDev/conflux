@@ -44,6 +44,8 @@ Requires:       %{name} = %{version}-%{release}
 # The UI uses Adw.ToggleGroup; the library's soname does not say which 1.x it is.
 Requires:       libadwaita%{?_isa} >= 1.7
 Requires:       polkit
+# Keeps the remotes' passwords in the keyring.
+Recommends:     /usr/bin/secret-tool
 
 %description    gtk
 Conflux shows every conflux sync with its live status, runs a sync or a dry

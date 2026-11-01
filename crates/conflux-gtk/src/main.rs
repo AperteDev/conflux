@@ -9,6 +9,7 @@ mod dryrun;
 mod editor;
 mod form;
 mod helper;
+mod keyring;
 mod model;
 mod prefs;
 mod scope;

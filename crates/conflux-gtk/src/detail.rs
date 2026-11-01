@@ -15,7 +15,7 @@ use crate::editor::Edit;
 use crate::form::{self, Form, Kind, Toaster};
 use crate::model::{self, ConfigState, Loaded, Scope, Snapshot};
 use crate::scope::{self, ScopeView, ShowStatus};
-use crate::{text, ui};
+use crate::{keyring, text, ui};
 
 fn size(bytes: u64) -> String {
     if bytes == 0 {
@@ -721,6 +721,14 @@ pub fn remote_page(
     )];
 
     if !folder {
+        let command = form.entry(
+            "Password command",
+            "password_command",
+            w("password_command"),
+            Kind::Text,
+            Some("none"),
+            false,
+        );
         let mut rows: Vec<gtk::Widget> = vec![
             form.entry(
                 "Username",
@@ -731,22 +739,36 @@ pub fn remote_page(
                 false,
             )
             .upcast(),
-            form.entry(
-                "Password command",
-                "password_command",
-                w("password_command"),
-                Kind::Text,
-                Some("none"),
-                false,
-            )
-            .upcast(),
-            form.password(
-                "Password, kept as plain text in the config",
-                "password",
-                w("password"),
-            )
-            .upcast(),
+            command.clone().upcast(),
         ];
+        if keyring::available(view.scope) {
+            rows.push(form.keyring_password(remote.id.clone(), &command).upcast());
+            // A password kept in the config can move to the keyring.
+            if let Some(plain) = w("password").filter(|_| form.editable()) {
+                let row = adw::ButtonRow::builder()
+                    .title("Move the Password from the Config to the Keyring")
+                    .build();
+                let (form, id) = (form.clone(), remote.id.clone());
+                row.connect_activated(move |row| {
+                    row.set_sensitive(false);
+                    let done = row.clone();
+                    form.save_password(id.clone(), plain.clone(), &command, move |ok| {
+                        done.set_visible(!ok);
+                        done.set_sensitive(true);
+                    });
+                });
+                rows.push(row.upcast());
+            }
+        } else {
+            rows.push(
+                form.password(
+                    "Password, kept as plain text in the config",
+                    "password",
+                    w("password"),
+                )
+                .upcast(),
+            );
+        }
         if remote.backend == RemoteKind::Git {
             rows.push(
                 form.entry(

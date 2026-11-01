@@ -278,10 +278,12 @@ What a walk through the app with a realistic config showed was missing:
   connects the way a sync would (WebDAV `PROPFIND` of depth 0, git's list of refs and the
   branch, a folder's existence) without changing anything. User scope only: the app runs it
   as the user, while a system remote's credentials are the system daemon's.
-- [ ] **Passwords in the keyring:** the app saves a remote's password with `secret-tool store`
+- [x] **Passwords in the keyring:** the app saves a remote's password with `secret-tool store`
   (attributes `service conflux remote <id>`) and writes `password_command = "secret-tool
   lookup service conflux remote <id>"` in place of `password`. User scope only, outside the
-  Flatpak (whose keyring the host's daemon cannot read), and when `secret-tool` is installed.
+  Flatpak (whose keyring the host's daemon cannot read), and when `secret-tool` is installed:
+  the `.deb` and the RPM recommend it (`libsecret-tools`, `/usr/bin/secret-tool`); the AUR
+  package should list `libsecret` in its `optdepends`.
 - [ ] **Notifications:** user daemons notify, through the session bus (`zbus`), when a sync
   fails (once per run of failures, after the retries; withdrawn when it works again) and
   when a sync leaves conflict copies. `[daemon] notify = false` turns them off; system

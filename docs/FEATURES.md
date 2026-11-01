@@ -350,6 +350,14 @@ the credentials, lists a git repository's branches (and looks for `branch`), or
 looks for the folder, and says what went wrong if anything did. It runs as you,
 so it is offered for your own remotes only.
 
+A remote's password can be kept in your keyring instead of the config file: the
+app saves it with `secret-tool` (from libsecret) and writes
+`password_command = "secret-tool lookup service conflux remote <id>"`, which the
+daemon runs to read it back. Add Remote asks for it, a remote's page changes it,
+and a password already in the config moves to the keyring with one button. This
+needs `secret-tool` installed; the Flatpak keeps its own keyring, which the
+daemon cannot read, so there the password stays a command or plain text.
+
 It manages your daemons, one per profile: start and stop them, have them start at
 login, add one for a new profile with the syncs it runs, remove one, keep them
 running after you log out, and read a daemon's log. They are controlled through

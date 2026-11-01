@@ -12,8 +12,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and the system, live sync status (why a sync failed in a few words), where each setting
   comes from, the config's warnings in plain words (with a fix where there is one), Sync Now
   and dry runs. It edits the user's config: every setting of a sync, a remote and
-  `[daemon]`, adding and deleting syncs and remotes, testing a remote's connection, and
-  starting a config from the example.
+  `[daemon]`, adding and deleting syncs and remotes, testing a remote's connection, keeping
+  a remote's password in the keyring, and starting a config from the example.
   Edits change only the lines they touch, keep comments, are checked the way the daemon
   checks them, and are reloaded by the running daemons. It manages the user's daemons too:
   one per profile, started, stopped and set to start at login through systemd, added and

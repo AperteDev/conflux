@@ -10,17 +10,31 @@ use adw::prelude::*;
 use conflux_core::config::parse_byte_size;
 use conflux_core::config_edit::{toml_edit, ConfigDoc, Section};
 use conflux_core::paths::{validate_profile, DEFAULT_PROFILE};
-use gtk::glib;
+use gtk::{gio, glib};
 
 use crate::editor::Edit;
 use crate::scope::ScopeView;
-use crate::ui;
+use crate::{keyring, ui};
 
 /// Where a form shows what went wrong.
 pub type Toaster = Rc<dyn Fn(&str)>;
 
 /// Choices longer than this many characters are shown under their title.
 const LONG_CHOICE: usize = 24;
+
+/// Where an entry row keeps the value it last wrote.
+const WRITTEN: &str = "form-written";
+
+/// Show `text` in a form's entry row as the setting's value, written by an
+/// edit made elsewhere.
+pub fn set_written(row: &adw::EntryRow, text: &str) {
+    // SAFETY: the key is only ever set by `Form::setup_entry`, with this type.
+    if let Some(written) = unsafe { row.data::<Rc<RefCell<String>>>(WRITTEN) } {
+        // SAFETY: the row keeps the value alive while it is used here.
+        *unsafe { written.as_ref() }.borrow_mut() = text.to_string();
+    }
+    ui::reset_entry(row, text);
+}
 
 /// What a text entry holds, deciding how its text is written.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -120,6 +134,77 @@ impl Form {
         row
     }
 
+    /// The password of remote `id`, saved in the keyring: applying it stores
+    /// it there (see `keyring`), then writes the `password_command` reading it
+    /// back in place of any `password`, shown in `command_row`.
+    pub fn keyring_password(
+        self: &Rc<Self>,
+        id: String,
+        command_row: &adw::EntryRow,
+    ) -> adw::PasswordEntryRow {
+        let row = adw::PasswordEntryRow::builder()
+            .title("Password, saved in the keyring")
+            .show_apply_button(true)
+            .sensitive(self.editable)
+            .build();
+        let (form, command_row) = (self.clone(), command_row.clone());
+        row.connect_apply(move |row| {
+            let password = row.text().to_string();
+            if password.is_empty() {
+                return;
+            }
+            row.set_sensitive(false);
+            let row = row.clone();
+            form.save_password(id.clone(), password, &command_row, move |ok| {
+                row.set_sensitive(true);
+                if ok {
+                    row.set_text("");
+                }
+            });
+        });
+        row
+    }
+
+    /// Store `password` as remote `id`'s in the keyring and write the
+    /// `password_command` reading it back in place of any `password`, shown in
+    /// `command_row`; `done` learns whether all of it was done.
+    pub fn save_password(
+        self: &Rc<Self>,
+        id: String,
+        password: String,
+        command_row: &adw::EntryRow,
+        done: impl FnOnce(bool) + 'static,
+    ) {
+        let (form, command_row) = (self.clone(), command_row.clone());
+        glib::spawn_future_local(async move {
+            let key = id.clone();
+            let stored = gio::spawn_blocking(move || keyring::store(&key, &password))
+                .await
+                .expect("storing the password panicked");
+            if let Err(e) = stored {
+                (form.toast)(&e);
+                return done(false);
+            }
+            let section = form.section;
+            let command = keyring::lookup_command(&id);
+            let written = command.clone();
+            let toast = form.toast.clone();
+            form.commit(
+                Box::new(move |doc| {
+                    doc.set(section, "password_command", written.as_str())?;
+                    doc.unset(section, "password").map(|_| ())
+                }),
+                move |ok| {
+                    if ok {
+                        set_written(&command_row, &command);
+                        toast("Saved the password in the keyring");
+                    }
+                    done(ok);
+                },
+            );
+        });
+    }
+
     /// A text entry whose text becomes the edit `to_edit` makes of it, or the
     /// message why it cannot.
     pub fn custom_entry(
@@ -151,6 +236,9 @@ impl Form {
         row.set_text(&written.borrow());
         row.set_show_apply_button(true);
         row.set_sensitive(self.editable);
+        // For `set_written`, when another edit writes this setting.
+        // SAFETY: the key is only ever used with this type.
+        unsafe { row.set_data(WRITTEN, written.clone()) };
 
         // The rows own the form; it holds no widget, so this makes no cycle.
         let form = self.clone();

@@ -63,7 +63,9 @@ conflux-gtk)
   depends=$(shlibs "$work/root/usr/bin/conflux-gtk" "$work/root/usr/lib/conflux/conflux-helper" |
     sed 's/libadwaita-1-0 ([^)]*), *//; s/, *libadwaita-1-0 ([^)]*)//')
   depends="$depends, libadwaita-1-0 (>= 1.7), conflux (= $version), pkexec"
-  extra="Section: gnome"
+  # secret-tool keeps the remotes' passwords in the keyring.
+  extra="Recommends: libsecret-tools
+Section: gnome"
   description="GNOME app to set up and watch conflux syncs
  Conflux shows every conflux sync with its live status, runs a sync or a dry
  run, and edits syncs, remotes and defaults in the config file, keeping its
