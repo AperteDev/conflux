@@ -338,7 +338,16 @@ impl Backend for WebdavBackend {
 }
 
 fn net_err(e: reqwest::Error) -> Error {
-    Error::Backend(format!("webdav request failed: {e}"))
+    // reqwest's message leaves out why a request failed (refused, no such host,
+    // an untrusted certificate): that is the innermost of its sources.
+    let mut cause = std::error::Error::source(&e);
+    while let Some(inner) = cause.and_then(std::error::Error::source) {
+        cause = Some(inner);
+    }
+    match cause {
+        Some(cause) => Error::Backend(format!("webdav request failed: {e}: {cause}")),
+        None => Error::Backend(format!("webdav request failed: {e}")),
+    }
 }
 
 /// The server root URL with a guaranteed trailing slash.
@@ -481,6 +490,24 @@ mod tests {
         </d:prop></d:propstat>
       </d:response>
     </d:multistatus>"#;
+
+    #[test]
+    fn network_errors_name_their_cause() {
+        // A port nothing listens on any more.
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let config = crate::Config::from_toml_str(&format!(
+            "[[remote]]\nid = \"r\"\nbackend = \"webdav\"\nurl = \"http://127.0.0.1:{port}/\"\n\n\
+             [[sync]]\nremote = \"r\"\nlocal = \"/tmp/x\"\nscope = \"mirror\"\n"
+        ))
+        .unwrap();
+        let backend = WebdavBackend::new(&config.remotes[0], &config.syncs[0]).unwrap();
+        let err = backend.snapshot().unwrap_err().to_string();
+        assert!(err.contains("Connection refused"), "{err}");
+    }
 
     #[test]
     fn parses_multistatus_files_and_collections() {

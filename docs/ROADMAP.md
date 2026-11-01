@@ -260,7 +260,7 @@ What a walk through the app with a realistic config showed was missing:
   in plain words, opens the sync, and offers the fix when there is one (an empty `include`:
   Sync Everything). Core gives the warnings as data (`Config::lints`), each with its sync;
   `warnings()` keeps the CLI's and the log's text.
-- [ ] **Short errors:** a sync's row says why it failed in a few words ("Can't reach the
+- [x] **Short errors:** a sync's row says why it failed in a few words ("Can't reach the
   server", "Wrong username or password"), its page the whole error. Classified in the app
   (`text::error_reason`); the WebDAV backend's errors name their cause (connection refused,
   DNS), which reqwest otherwise leaves out.

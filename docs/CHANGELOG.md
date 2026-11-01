@@ -9,8 +9,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - Conflux (`conflux-gtk`), a GTK (libadwaita) app: the syncs, remotes and daemons of the user
-  and the system, live sync status, where each setting comes from, the config's warnings in
-  plain words (with a fix where there is one), Sync Now and dry runs. It edits the user's config: every setting of a sync, a remote and
+  and the system, live sync status (why a sync failed in a few words), where each setting
+  comes from, the config's warnings in plain words (with a fix where there is one), Sync Now
+  and dry runs. It edits the user's config: every setting of a sync, a remote and
   `[daemon]`, adding and deleting syncs and remotes, and starting a config from the example.
   Edits change only the lines they touch, keep comments, are checked the way the daemon
   checks them, and are reloaded by the running daemons. It manages the user's daemons too:
@@ -51,6 +52,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - The Arch `PKGBUILD` in this repository: the `conflux`, `conflux-bin` and `conflux-git`
   packages are kept on the AUR.
+
+### Fixed
+
+- A WebDAV request that fails says why (connection refused, unknown host, untrusted
+  certificate), not only that sending it failed.
 
 ## [1.1.0] - 2026-07-31
 

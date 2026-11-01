@@ -1042,8 +1042,10 @@ impl ScopeView {
                 None => not_running_text(sync),
                 Some(_) if busy => "Syncing…".to_string(),
                 Some((_, g)) => match (&g.last_error, g.last_run, &g.last_summary) {
-                    (Some(e), Some(t), _) => format!("Failed {}: {e}", model::ago(t, now)),
-                    (Some(e), None, _) => format!("Failed: {e}"),
+                    (Some(e), Some(t), _) => {
+                        format!("Failed {}: {}", model::ago(t, now), text::error_reason(e))
+                    }
+                    (Some(e), None, _) => format!("Failed: {}", text::error_reason(e)),
                     (None, Some(t), Some(s)) => {
                         format!("Synced {}, {}", model::ago(t, now), model::summary_text(s))
                     }
@@ -1058,6 +1060,12 @@ impl ScopeView {
             ));
             let failed = status.is_some_and(|(_, g)| g.last_error.is_some()) && !busy;
             row.error.set_visible(failed);
+            // The whole error, which the row only gives the reason of.
+            row.error.set_tooltip_text(
+                status
+                    .and_then(|(_, g)| g.last_error.as_deref())
+                    .filter(|_| failed),
+            );
             row.spinner.set_visible(busy);
             row.sync.set_sensitive(status.is_some() && !busy);
             row.sync.set_tooltip_text(Some(if status.is_some() {
@@ -1138,11 +1146,12 @@ impl ScopeView {
                     .ask(socket, profile, Request::Sync(SyncTarget::All))
                     .await
                 {
-                    Ok(Response::Synced(outcomes)) => failed.extend(
-                        outcomes
-                            .into_iter()
-                            .filter_map(|o| o.error.map(|e| format!("{}: {e}", o.label))),
-                    ),
+                    Ok(Response::Synced(outcomes)) => {
+                        failed.extend(outcomes.into_iter().filter_map(|o| {
+                            o.error
+                                .map(|e| format!("{}: {}", o.label, text::error_reason(&e)))
+                        }))
+                    }
                     Ok(Response::Error(e)) | Err(e) => failed.push(e),
                     Ok(_) => {}
                 }
@@ -1356,7 +1365,7 @@ fn sync_outcome(title: &str, result: Result<Response, String>) -> String {
     match result {
         Ok(Response::Synced(outcomes)) => match outcomes.first() {
             Some(o) => match (&o.summary, &o.error) {
-                (_, Some(e)) => format!("{title} failed: {e}"),
+                (_, Some(e)) => format!("{title} failed: {}", text::error_reason(e)),
                 (Some(s), None) => format!("Synced {title}: {}", model::summary_text(s)),
                 (None, None) => format!("Synced {title}"),
             },
