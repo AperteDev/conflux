@@ -8,10 +8,12 @@ use conflux_core::config::{format_byte_size, Config, DEFAULT_GIT_PULL_INTERVAL};
 use conflux_core::config_edit::Section;
 use conflux_core::model::{Deletions, EmptyDirMode, RemoteKind};
 
+use gtk::gio;
+
 use crate::editor::Edit;
 use crate::form::{self, Form, Kind, Toaster};
 use crate::model::{self, ConfigState, Loaded, Snapshot};
-use crate::scope::ScopeView;
+use crate::scope::{self, ScopeView, ShowStatus};
 use crate::{text, ui};
 
 fn size(bytes: u64) -> String {
@@ -64,19 +66,19 @@ fn page(
 }
 
 /// A page with a banner for when the file changes on disk under it, and
-/// `button` at the end of its header bar.
+/// `buttons` at the end of its header bar, the first one last.
 pub fn page_with(
     view: &Rc<ScopeView>,
     title: &str,
     groups: Vec<adw::PreferencesGroup>,
-    button: Option<gtk::Widget>,
+    buttons: impl IntoIterator<Item = gtk::Widget>,
 ) -> adw::NavigationPage {
     let prefs = adw::PreferencesPage::new();
     for g in groups {
         prefs.add(&g);
     }
     let header = adw::HeaderBar::new();
-    if let Some(button) = button {
+    for button in buttons {
         header.pack_end(&button);
     }
     let banner = adw::Banner::builder()
@@ -101,29 +103,27 @@ pub fn page_with(
 
 /// A header button that runs `delete` once the user confirms it.
 fn delete_button(view: &ScopeView, delete: Delete) -> gtk::Button {
-    let Delete { heading, body, run } = delete;
     let button = gtk::Button::builder()
         .icon_name("user-trash-symbolic")
-        .tooltip_text(heading.as_str())
+        .tooltip_text(delete.heading.as_str())
         .build();
     let window = view.ctx().window.clone();
-    button.connect_clicked(move |_| {
-        let dialog = adw::AlertDialog::new(Some(&heading), Some(&body));
-        dialog.add_responses(&[("cancel", "Cancel"), ("delete", "Delete")]);
-        dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
-        dialog.set_default_response(Some("cancel"));
-        let run = run.clone();
-        dialog.choose(
-            Some(&window),
-            gtk::gio::Cancellable::NONE,
-            move |response| {
-                if response == "delete" {
-                    run();
-                }
-            },
-        );
-    });
+    button.connect_clicked(move |_| confirm_delete(&window, &delete));
     button
+}
+
+/// Run `delete` once the user confirms it.
+fn confirm_delete(window: &adw::ApplicationWindow, delete: &Delete) {
+    let dialog = adw::AlertDialog::new(Some(&delete.heading), Some(&delete.body));
+    dialog.add_responses(&[("cancel", "Cancel"), ("delete", "Delete")]);
+    dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
+    dialog.set_default_response(Some("cancel"));
+    let run = delete.run.clone();
+    dialog.choose(Some(window), gio::Cancellable::NONE, move |response| {
+        if response == "delete" {
+            run();
+        }
+    });
 }
 
 /// Write `edit` removing an entry, then leave its page.
@@ -192,25 +192,20 @@ pub fn sync_page(
     let w = |key| form::written(doc, section, key);
     let mut groups = Vec::new();
 
-    if let Some((runner, status)) = snapshot.status_of(&label, sync.id.as_deref()) {
-        let last = match status.last_run {
-            Some(t) => conflux_core::timefmt::local(t),
-            None => "Never".to_string(),
-        };
-        let result = match (&status.last_error, &status.last_summary) {
-            (Some(e), _) => format!("Failed: {e}"),
-            (None, Some(s)) => model::summary_text(s),
-            (None, None) => "None yet".to_string(),
-        };
-        groups.push(group(
-            "Status",
-            &[
-                ui::property("Run by", &format!("The {} daemon", runner.profile)).upcast_ref(),
-                ui::property("Last sync", &last).upcast_ref(),
-                ui::property("Result", &result).upcast_ref(),
-            ],
-        ));
-    }
+    // Filled in, and kept up to date, by `show_status` below.
+    let run_by = ui::property("Run by", "");
+    let last = ui::property("Last sync", "");
+    let result = ui::property("Result", "");
+    let error = ui::property("Error", "");
+    groups.push(group(
+        "Status",
+        &[
+            run_by.upcast_ref(),
+            last.upcast_ref(),
+            result.upcast_ref(),
+            error.upcast_ref(),
+        ],
+    ));
 
     groups.push(group(
         "Identity",
@@ -485,23 +480,120 @@ pub fn sync_page(
     }
     groups.push(form.profiles(known, sync.profiles.clone()));
 
-    let delete = remove(
-        &form,
-        Box::new(move |doc| doc.remove_sync(index)),
-        "Removed the sync",
-    );
-    page(
+    // Sync Now, and a menu with the rest.
+    let sync_now = gtk::Button::builder()
+        .icon_name("view-refresh-symbolic")
+        .tooltip_text("Sync Now")
+        .build();
+    let menu = gio::Menu::new();
+    let runs = gio::Menu::new();
+    runs.append(Some("Dry Run"), Some("sync.dry-run"));
+    runs.append(Some("Open Local Folder"), Some("sync.open-folder"));
+    menu.append_section(None, &runs);
+    if view.editable() {
+        let edits = gio::Menu::new();
+        edits.append(Some("Delete Sync…"), Some("sync.delete"));
+        menu.append_section(None, &edits);
+    }
+    let more = gtk::MenuButton::builder()
+        .icon_name("view-more-symbolic")
+        .tooltip_text("More")
+        .menu_model(&menu)
+        .build();
+    let weak = Rc::downgrade(view);
+    sync_now.connect_clicked(move |_| {
+        if let Some(view) = weak.upgrade() {
+            view.sync_now(index);
+        }
+    });
+
+    let actions = gio::SimpleActionGroup::new();
+    let weak = Rc::downgrade(view);
+    let dry_run = gio::ActionEntry::builder("dry-run")
+        .activate(move |_: &gio::SimpleActionGroup, _, _| {
+            if let Some(view) = weak.upgrade() {
+                view.dry_run(index);
+            }
+        })
+        .build();
+    let local = loaded
+        .resolved_sync(index)
+        .map(|s| s.local.clone())
+        .unwrap_or_else(|| sync.local.clone());
+    let ctx = view.ctx().clone();
+    let open_folder = gio::ActionEntry::builder("open-folder")
+        .activate(move |_: &gio::SimpleActionGroup, _, _| scope::open_folder(&ctx, &local))
+        .build();
+    let delete = Delete {
+        heading: "Delete Sync".to_string(),
+        body: format!("{title} is removed from the config file. Its files stay where they are."),
+        run: remove(
+            &form,
+            Box::new(move |doc| doc.remove_sync(index)),
+            "Removed the sync",
+        ),
+    };
+    let window = view.ctx().window.clone();
+    let delete = gio::ActionEntry::builder("delete")
+        .activate(move |_: &gio::SimpleActionGroup, _, _| confirm_delete(&window, &delete))
+        .build();
+    actions.add_action_entries([dry_run, open_folder, delete]);
+
+    let nav_page = page_with(
         view,
         &title,
         groups,
-        Some(Delete {
-            heading: "Delete Sync".to_string(),
-            body: format!(
-                "{title} is removed from the config file. Its files stay where they are."
-            ),
-            run: delete,
-        }),
-    )
+        [more.upcast(), sync_now.clone().upcast()],
+    );
+    nav_page.insert_action_group("sync", Some(&actions));
+
+    let not_running = scope::not_running_text(sync);
+    let show_status: ShowStatus = Box::new(move |status, busy| {
+        let now = model::now_secs();
+        let (by, outcome, failure) = match status {
+            None => (not_running.clone(), String::new(), None),
+            Some((daemon, g)) => {
+                let outcome = match (&g.last_error, &g.last_summary) {
+                    _ if busy => "Syncing…".to_string(),
+                    (Some(e), _) => format!("Failed: {}", text::error_reason(e)),
+                    (None, Some(s)) => text::capitalized(&model::summary_text(s)),
+                    (None, None) => "None yet".to_string(),
+                };
+                (
+                    format!("The {} daemon", daemon.profile),
+                    outcome,
+                    g.last_error.clone().filter(|_| !busy),
+                )
+            }
+        };
+        run_by.set_subtitle(&by);
+        let last_run = status.and_then(|(_, g)| g.last_run);
+        last.set_subtitle(&match last_run {
+            Some(t) => text::capitalized(&model::when(t, now)),
+            None => "Never".to_string(),
+        });
+        last.set_visible(status.is_some());
+        result.set_subtitle(&outcome);
+        result.set_visible(status.is_some());
+        // The whole error, when the result gives only its reason.
+        let full = failure.filter(|e| text::error_reason(e) != *e);
+        error.set_subtitle(full.as_deref().unwrap_or_default());
+        error.set_visible(full.is_some());
+        sync_now.set_sensitive(status.is_some() && !busy);
+        sync_now.set_tooltip_text(Some(if status.is_some() {
+            "Sync Now"
+        } else {
+            "No running daemon runs this sync"
+        }));
+        if let Some(action) = actions.lookup_action("dry-run") {
+            action
+                .downcast::<gio::SimpleAction>()
+                .expect("a simple action")
+                .set_enabled(status.is_some() && !busy);
+        }
+    });
+    view.watch_sync(&nav_page, label, sync.id.clone(), show_status);
+    nav_page
 }
 
 /// The `[[remote]]` at `index` of the snapshot's config.

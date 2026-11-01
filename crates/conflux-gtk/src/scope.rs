@@ -13,7 +13,7 @@ use adw::prelude::*;
 use conflux_core::config::LintKind;
 use conflux_core::config_edit::{toml_edit, Section};
 use conflux_core::helper::{HelperRequest, HelperResponse, UnitAction};
-use conflux_core::ipc::{client, Request, Response, SyncTarget};
+use conflux_core::ipc::{client, GroupStatus, Request, Response, SyncTarget};
 use gtk::{gio, glib};
 
 use crate::editor::{self, Edit, EditError};
@@ -44,6 +44,8 @@ pub struct ScopeView {
     editing: Cell<bool>,
     /// Banners of open pages, shown when the file changes on disk under them.
     banners: RefCell<Vec<glib::WeakRef<adw::Banner>>>,
+    /// Open pages showing a sync's status, updated with the rows.
+    watches: RefCell<Vec<SyncWatch>>,
     monitor: RefCell<Option<(PathBuf, gio::FileMonitor)>>,
     /// The privileged helper, while the system scope is unlocked.
     helper: RefCell<Option<Rc<Helper>>>,
@@ -54,6 +56,17 @@ struct Job {
     generation: u64,
     edit: Edit,
     done: Box<dyn FnOnce(Result<(), String>)>,
+}
+
+/// How a page shows a sync's status: the daemon running it with the status it
+/// reports, if one does, and whether it is syncing.
+pub type ShowStatus = Box<dyn Fn(Option<(&Daemon, &GroupStatus)>, bool)>;
+
+struct SyncWatch {
+    page: glib::WeakRef<adw::NavigationPage>,
+    label: String,
+    id: Option<String>,
+    show: ShowStatus,
 }
 
 #[derive(Default)]
@@ -115,6 +128,7 @@ impl ScopeView {
             queue: RefCell::default(),
             editing: Cell::new(false),
             banners: RefCell::default(),
+            watches: RefCell::default(),
             monitor: RefCell::default(),
             helper: RefCell::default(),
             unlocking: Cell::new(false),
@@ -256,6 +270,33 @@ impl ScopeView {
     /// Pages built before now must not edit by position any more.
     pub fn bump_generation(&self) {
         self.generation.set(self.generation.get() + 1);
+    }
+
+    /// Keep `show` up to date with the status of the sync with `label` (or
+    /// `id`) while `page` lives, starting now.
+    pub fn watch_sync(
+        &self,
+        page: &adw::NavigationPage,
+        label: String,
+        id: Option<String>,
+        show: ShowStatus,
+    ) {
+        {
+            let state = self.state.borrow();
+            let status = state
+                .snapshot
+                .as_ref()
+                .and_then(|s| s.status_of(&label, id.as_deref()));
+            show(status, sync_busy(&state, &label, status));
+        }
+        let mut watches = self.watches.borrow_mut();
+        watches.retain(|w| w.page.upgrade().is_some());
+        watches.push(SyncWatch {
+            page: page.downgrade(),
+            label,
+            id,
+            show,
+        });
     }
 
     /// Show `banner` when the file changes on disk while its page is open.
@@ -1036,7 +1077,7 @@ impl ScopeView {
         for row in &state.sync_rows {
             let sync = &loaded.raw.syncs[row.index];
             let status = snapshot.status_of(&row.label, row.id.as_deref());
-            let busy = state.busy.contains(&row.label) || status.is_some_and(|(_, g)| g.running);
+            let busy = sync_busy(&state, &row.label, status);
             any_running |= status.is_some();
             let line = match status {
                 None => not_running_text(sync),
@@ -1088,6 +1129,13 @@ impl ScopeView {
         if let Some(button) = &state.sync_all {
             button.set_sensitive(any_running);
         }
+
+        let mut watches = self.watches.borrow_mut();
+        watches.retain(|w| w.page.upgrade().is_some());
+        for watch in watches.iter() {
+            let status = snapshot.status_of(&watch.label, watch.id.as_deref());
+            (watch.show)(status, sync_busy(&state, &watch.label, status));
+        }
     }
 
     /// The daemon running the sync at `index` (its socket and profile), and
@@ -1105,7 +1153,7 @@ impl ScopeView {
         ))
     }
 
-    fn sync_now(self: &Rc<Self>, index: usize) {
+    pub fn sync_now(self: &Rc<Self>, index: usize) {
         let Some((socket, profile, label, title)) = self.runner(index) else {
             return;
         };
@@ -1172,7 +1220,7 @@ impl ScopeView {
         });
     }
 
-    fn dry_run(self: &Rc<Self>, index: usize) {
+    pub fn dry_run(self: &Rc<Self>, index: usize) {
         if let Some((socket, profile, label, title)) = self.runner(index) {
             dryrun::show(self, socket, profile, label, &title);
         }
@@ -1197,6 +1245,11 @@ fn structure_key(snapshot: &Snapshot) -> String {
         snapshot.config_path.display(),
         profiles.join(",")
     )
+}
+
+/// Whether the sync with `label` is syncing: started here, or by its daemon.
+fn sync_busy(state: &State, label: &str, status: Option<(&Daemon, &GroupStatus)>) -> bool {
+    state.busy.contains(label) || status.is_some_and(|(_, g)| g.running)
 }
 
 /// The text of the snapshot's config file, when it could be read.
@@ -1347,7 +1400,7 @@ fn daemon_tooltip(daemon: &Daemon) -> Option<String> {
     }
 }
 
-fn not_running_text(sync: &conflux_core::config::Sync) -> String {
+pub fn not_running_text(sync: &conflux_core::config::Sync) -> String {
     let default = sync.profiles.len() == 1 && sync.profiles[0] == "default";
     if default {
         "Not run by a running daemon".to_string()
@@ -1377,7 +1430,7 @@ fn sync_outcome(title: &str, result: Result<Response, String>) -> String {
     }
 }
 
-fn open_folder(ctx: &Rc<Ctx>, path: &std::path::Path) {
+pub fn open_folder(ctx: &Rc<Ctx>, path: &std::path::Path) {
     let ctx2 = ctx.clone();
     gtk::FileLauncher::new(Some(&gio::File::for_path(path))).launch(
         Some(&ctx.window),

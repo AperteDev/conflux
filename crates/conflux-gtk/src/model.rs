@@ -363,6 +363,18 @@ pub fn ago(then: u64, now: u64) -> String {
     }
 }
 
+/// When something happened, in more detail than [`ago`]: "just now", "5 min
+/// ago (11:16)", or the date and time for anything older than a day.
+pub fn when(then: u64, now: u64) -> String {
+    // "2026-07-11 14:34:56 +02:00"
+    let at = conflux_core::timefmt::local(then);
+    match now.saturating_sub(then) {
+        0..60 => "just now".to_string(),
+        60..86400 => format!("{} ({})", ago(then, now), at.get(11..16).unwrap_or(&at)),
+        _ => at.get(..16).unwrap_or(&at).to_string(),
+    }
+}
+
 /// "2 added, 1 removed", or "no changes".
 pub fn summary_text(s: &SyncSummary) -> String {
     let parts: Vec<String> = [
@@ -459,6 +471,13 @@ mod tests {
         assert_eq!(ago(1000, 1030), "just now");
         assert_eq!(ago(1000, 1000 + 5 * 60), "5 min ago");
         assert_eq!(ago(1000, 1000 + 3 * 3600 + 5), "3 h ago");
+        assert_eq!(when(1000, 1030), "just now");
+        let at = conflux_core::timefmt::local(1000);
+        assert_eq!(
+            when(1000, 1000 + 5 * 60),
+            format!("5 min ago ({})", &at[11..16])
+        );
+        assert_eq!(when(1000, 1000 + 3 * 86400), at[..16]);
         assert_eq!(
             summary_text(&SyncSummary {
                 added: 2,

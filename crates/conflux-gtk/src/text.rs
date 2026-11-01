@@ -157,8 +157,12 @@ pub fn error_reason(error: &str) -> String {
         return reason.to_string();
     }
     let rest = error.strip_prefix("backend error: ").unwrap_or(error);
-    let first = rest.split("; ").next().unwrap_or(rest).trim();
-    let mut chars = first.chars();
+    capitalized(rest.split("; ").next().unwrap_or(rest).trim())
+}
+
+/// `text` with its first letter in upper case.
+pub fn capitalized(text: &str) -> String {
+    let mut chars = text.chars();
     match chars.next() {
         Some(c) => c.to_uppercase().chain(chars).collect(),
         None => String::new(),

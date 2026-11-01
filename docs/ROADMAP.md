@@ -264,7 +264,7 @@ What a walk through the app with a realistic config showed was missing:
   server", "Wrong username or password"), its page the whole error. Classified in the app
   (`text::error_reason`); the WebDAV backend's errors name their cause (connection refused,
   DNS), which reqwest otherwise leaves out.
-- [ ] **A sync's page acts:** Sync Now, Dry Run and Open Local Folder in its header (Delete in
+- [x] **A sync's page acts:** Sync Now, Dry Run and Open Local Folder in its header (Delete in
   its menu), and its status follows the daemon live, the last sync as "3 min ago".
 - [ ] **Small fixes:** a remote's page opened with its Id selected for editing; long choices
   (Scope) were cut off, now shown under their title; a folder remote's path reads with `~`.
