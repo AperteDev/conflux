@@ -27,20 +27,23 @@ Update these in the same commit as the change that affects them:
   app's metainfo. CI then checks and builds the packages with that version; if that passes,
   the workflow commits `chore(release): X`, tags `vX`, and publishes the GitHub release with
   the changelog section as notes, the packages and `SHA256SUMS`. Then `scripts/aur.sh` moves
-  the AUR packages `conflux` and `conflux-bin` to the release, pushed by the AURomatic account
-  (a co-maintainer; the AperteDev secret `AUR_SSH_KEY`) as commits by SelfRef. Don't bump
-  versions or edit the release sections by hand.
+  the AUR packages `conflux`, `conflux-bin`, `conflux-gtk` and `conflux-gtk-bin` to the
+  release, pushed by the AURomatic account (a co-maintainer of each; the AperteDev secret
+  `AUR_SSH_KEY`) as commits by SelfRef. Don't bump versions or edit the release sections by
+  hand.
 - Two packages, in every format: `conflux` (daemon and CLI) and `conflux-gtk` (the app and its
   helper). Each is installed into a tree by the root `Makefile` (`install-cli`, `install-gtk`;
   `install-flatpak` for the app alone), and every package is made from those trees: the
   tarballs, the `.deb` packages (`scripts/deb.sh`), the RPMs (`packaging/rpm/conflux.spec`,
   built on COPR from `.copr/Makefile`) and the Flatpak (`packaging/flatpak/`). A new installed
   file goes into the `Makefile`, the spec's `%files` and, if it needs care, `scripts/deb.sh`.
-- The AUR packages (`conflux`, `conflux-bin`, `conflux-git`, and the app's) live on the AUR,
-  not here. The CLI tarball's name and layout (`conflux-vX-<arch>-linux.tar.gz`, one top-level
-  directory with `usr/` and `etc/`) are what `conflux-bin` uses: keep them stable. A change to
-  what `install-cli` installs or to the build needs the same in `conflux` and `conflux-git` by
-  hand, as the release only moves their version.
+- The AUR packages (`conflux`, `conflux-bin`, `conflux-git`, `conflux-gtk`, `conflux-gtk-bin`,
+  `conflux-gtk-git`) live on the AUR, not here. The tarballs' names and layouts are what the
+  `-bin` packages use: keep them stable (the CLI's `conflux-vX-<arch>-linux.tar.gz`, one
+  top-level directory with `usr/` and `etc/`; the app's `conflux-gtk-X-x86_64.tar.gz`, files to
+  unpack into `/`). The source packages install with `make install-cli` / `make install-gtk`,
+  so new files reach them on their own; a change to the build or the dependencies needs the
+  same in them by hand, as the release only moves their version.
 - The metainfo (`data/dev.aperte.Conflux.metainfo.xml`) must pass `appstreamcli validate`, and
   the desktop file `desktop-file-validate`; CI checks both.
 - The spec's `License:` lists the licenses of the crates linked into the binaries; check it

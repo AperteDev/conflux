@@ -1,6 +1,7 @@
 #!/bin/sh
 # Update the AUR packages built from a release to it: pkgver, pkgrel 1, the checksums of the
-# release's files and .SRCINFO, committed and pushed. conflux-git follows on its own. Run it on
+# release's files and .SRCINFO, committed and pushed. conflux-git and conflux-gtk-git follow
+# on their own. Run it on
 # Arch (makepkg, updpkgsums from pacman-contrib) as a user allowed to push the packages: the
 # Release workflow runs it after publishing, with AURomatic's key (a co-maintainer of each).
 # A packaging change (dependencies, files, build steps) still goes in by hand.
@@ -22,9 +23,15 @@ echo 'aur.archlinux.org ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEuBKrPzbawxA/k2g6Nc
 GIT_SSH_COMMAND="ssh -o UserKnownHostsFile=$work/known_hosts -o StrictHostKeyChecking=yes${AUR_KEY:+ -o IdentitiesOnly=yes -i $AUR_KEY}"
 export GIT_SSH_COMMAND
 
-for pkg in conflux conflux-bin; do
+for pkg in conflux conflux-bin conflux-gtk conflux-gtk-bin; do
   git clone -q "ssh://aur@aur.archlinux.org/$pkg.git" "$work/$pkg"
   cd "$work/$pkg"
+  # A package's first version goes up by hand, with its PKGBUILD.
+  if [ ! -f PKGBUILD ]; then
+    echo "$pkg: not on the AUR yet, skipped"
+    cd - > /dev/null
+    continue
+  fi
   sed -i -e "s/^pkgver=.*/pkgver=$version/" -e 's/^pkgrel=.*/pkgrel=1/' PKGBUILD
   updpkgsums
   makepkg --printsrcinfo > .SRCINFO
