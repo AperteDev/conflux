@@ -1,6 +1,7 @@
 //! Dialogs adding a sync or a remote. Nothing is written until Add, and only an
 //! entry the daemon accepts, so half-filled ones never reach the file.
 
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use adw::prelude::*;
@@ -54,8 +55,8 @@ fn text(row: &adw::EntryRow) -> String {
     row.text().trim().to_string()
 }
 
-/// Write `table` as a new `entry`, closing the dialog when it is in, or saying
-/// in its banner why it is not.
+/// Write `table` as a new `entry`, closing the dialog and calling `added` when
+/// it is in, or saying in its banner why it is not.
 fn add(
     view: &Rc<ScopeView>,
     dialog: &adw::Dialog,
@@ -63,6 +64,7 @@ fn add(
     entry: Entry,
     table: toml_edit::Table,
     done: &'static str,
+    added: impl FnOnce() + 'static,
 ) {
     let (dialog, banner, ctx) = (dialog.clone(), banner.clone(), view.ctx().clone());
     view.edit(
@@ -72,6 +74,7 @@ fn add(
             Ok(()) => {
                 dialog.close();
                 ctx.toast(done);
+                added();
             }
             Err(e) => {
                 banner.set_title(&e);
@@ -86,6 +89,48 @@ fn refuse(banner: &adw::Banner, why: &str) {
     banner.set_revealed(true);
 }
 
+/// What a new sync syncs, as Add Sync offers it: its label, the `scope` it
+/// writes (`None`: the default), and whether it includes everything.
+const WHAT: [(&str, Option<&str>, bool); 4] = [
+    ("Everything, both ways", None, true),
+    ("Picked paths, both ways", None, false),
+    ("Upload everything", Some("local"), false),
+    ("Download everything", Some("remote"), false),
+];
+
+/// When a new sync of `kind` (a remote, a folder, a git clone) can run: the
+/// `trigger` written (`None`: the default, on local changes) and its label.
+/// Only a folder can be watched for changes on its side.
+fn triggers(kind: u32, interval: &str) -> Vec<(Option<&'static str>, String)> {
+    let mut list = vec![(None, "On local changes".to_string())];
+    if kind == 1 {
+        list.push((Some("watch-both"), "On changes on either side".to_string()));
+    }
+    list.push((Some("timer"), format!("Every {interval}")));
+    list.push((Some("manual"), "Only when asked".to_string()));
+    list
+}
+
+/// A remote as Add Sync lists it: its label and id, or its id.
+fn remote_name(id: &str, label: Option<&str>) -> String {
+    match label {
+        Some(label) => format!("{label} ({id})"),
+        None => id.to_string(),
+    }
+}
+
+/// Show `names` in `row`, or that there are none yet.
+fn fill_remotes(row: &adw::ComboRow, names: &[String]) {
+    if names.is_empty() {
+        row.set_model(Some(&gtk::StringList::new(&["None yet"])));
+        row.set_sensitive(false);
+    } else {
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        row.set_model(Some(&gtk::StringList::new(&names)));
+        row.set_sensitive(true);
+    }
+}
+
 pub fn add_sync(view: &Rc<ScopeView>) {
     let Some(snapshot) = view.snapshot() else {
         return;
@@ -93,81 +138,120 @@ pub fn add_sync(view: &Rc<ScopeView>) {
     let ConfigState::Loaded(loaded) = &snapshot.config else {
         return;
     };
-    let remotes: Vec<String> = loaded.raw.remotes.iter().map(|r| r.id.clone()).collect();
+    // The remotes' ids and names; one added from here joins them.
+    let remotes: Rc<RefCell<Vec<(String, String)>>> = Rc::new(RefCell::new(
+        loaded
+            .raw
+            .remotes
+            .iter()
+            .map(|r| (r.id.clone(), remote_name(&r.id, r.label.as_deref())))
+            .collect(),
+    ));
+    let interval = crate::text::duration(loaded.raw.daemon.interval);
     let window = view.ctx().window.clone();
 
     let kind = adw::ComboRow::builder()
         .title("Kind")
         .model(&gtk::StringList::new(&[
             "Sync with a remote",
-            "Mirror to a folder",
+            "Sync with a folder",
             "Keep a git clone in sync",
         ]))
         .build();
     let remote = adw::ComboRow::builder().title("Remote").build();
-    if remotes.is_empty() {
-        remote.set_model(Some(&gtk::StringList::new(&[
-            "None yet: add a remote first",
-        ])));
-        remote.set_sensitive(false);
-    } else {
-        let ids: Vec<&str> = remotes.iter().map(String::as_str).collect();
-        remote.set_model(Some(&gtk::StringList::new(&ids)));
-    }
+    let names: Vec<String> = remotes.borrow().iter().map(|(_, n)| n.clone()).collect();
+    fill_remotes(&remote, &names);
+    let new_remote = adw::ButtonRow::builder()
+        .title("Add a Remote…")
+        .start_icon_name("list-add-symbolic")
+        .build();
     let remote_path = entry("Path on the remote (empty: its root)");
-    let folder = entry("Folder to mirror to");
+    let folder = entry("Folder to sync with");
     ui::add_chooser(&window, view.scope, &folder, true, |_| {});
     let local = entry("Local folder");
     ui::add_chooser(&window, view.scope, &local, true, |_| {});
     let repo = entry("Git clone");
     ui::add_chooser(&window, view.scope, &repo, true, |_| {});
-    let everything = adw::SwitchRow::builder()
-        .title("Sync everything")
-        .subtitle("Otherwise pick the paths to sync after adding it")
-        .active(true)
+    let labels: Vec<&str> = WHAT.iter().map(|(label, _, _)| *label).collect();
+    let what = adw::ComboRow::builder()
+        .title("What it syncs")
+        .use_subtitle(true)
         .build();
+    // Set after `use-subtitle`, which only follows later changes.
+    what.set_model(Some(&gtk::StringList::new(&labels)));
+    let when = adw::ComboRow::builder()
+        .title("When it syncs")
+        .use_subtitle(true)
+        .build();
+    // The triggers `when` offers now.
+    let trigger_values: Rc<RefCell<Vec<Option<&'static str>>>> = Rc::default();
     let id = entry("Id, to name it in the CLI (optional)");
     let label = entry("Label (optional)");
 
-    let what = adw::PreferencesGroup::new();
+    let target = adw::PreferencesGroup::new();
     for row in [
         kind.upcast_ref::<gtk::Widget>(),
         remote.upcast_ref(),
+        new_remote.upcast_ref(),
         remote_path.upcast_ref(),
         folder.upcast_ref(),
         repo.upcast_ref(),
         local.upcast_ref(),
-        everything.upcast_ref(),
     ] {
-        what.add(row);
+        target.add(row);
     }
+    let how = adw::PreferencesGroup::new();
+    how.add(&what);
+    how.add(&when);
     let names = adw::PreferencesGroup::new();
     names.add(&id);
     names.add(&label);
     let page = adw::PreferencesPage::new();
-    page.add(&what);
+    page.add(&target);
+    page.add(&how);
     page.add(&names);
 
     let show_kind = {
-        let (remote, remote_path, folder, repo, local, everything) = (
+        let (remote, new_remote, remote_path, folder, repo, local, what, when) = (
             remote.clone(),
+            new_remote.clone(),
             remote_path.clone(),
             folder.clone(),
             repo.clone(),
             local.clone(),
-            everything.clone(),
+            what.clone(),
+            when.clone(),
         );
+        let trigger_values = trigger_values.clone();
         move |k: u32| {
             remote.set_visible(k == 0);
+            new_remote.set_visible(k == 0);
             remote_path.set_visible(k == 0);
             folder.set_visible(k == 1);
             repo.set_visible(k == 2);
             local.set_visible(k != 2);
-            everything.set_visible(k != 2);
+            what.set_visible(k != 2);
+            let list = triggers(k, &interval);
+            let labels: Vec<&str> = list.iter().map(|(_, l)| l.as_str()).collect();
+            when.set_model(Some(&gtk::StringList::new(&labels)));
+            *trigger_values.borrow_mut() = list.into_iter().map(|(v, _)| v).collect();
         }
     };
     show_kind(0);
     kind.connect_selected_notify(move |row| show_kind(row.selected()));
+
+    {
+        let (view, remotes, remote) = (view.clone(), remotes.clone(), remote.clone());
+        new_remote.connect_activated(move |_| {
+            let (remotes, remote) = (remotes.clone(), remote.clone());
+            add_remote_then(&view, move |id, name| {
+                remotes.borrow_mut().push((id, name));
+                let names: Vec<String> = remotes.borrow().iter().map(|(_, n)| n.clone()).collect();
+                fill_remotes(&remote, &names);
+                remote.set_selected(names.len() as u32 - 1);
+            });
+        });
+    }
 
     let (dialog, add_button, banner) = dialog("Add Sync", &page);
     let view = view.clone();
@@ -184,7 +268,8 @@ pub fn add_sync(view: &Rc<ScopeView>) {
         }
         match kind.selected() {
             0 => {
-                let Some(r) = remotes.get(remote.selected() as usize) else {
+                let remotes = remotes.borrow();
+                let Some((r, _)) = remotes.get(remote.selected() as usize) else {
                     return refuse(&banner, "Add a remote first, or pick another kind");
                 };
                 table.insert("remote", toml_edit::value(r.as_str()));
@@ -193,7 +278,7 @@ pub fn add_sync(view: &Rc<ScopeView>) {
                 }
             }
             1 if text(&folder).is_empty() => {
-                return refuse(&banner, "Choose the folder to mirror to");
+                return refuse(&banner, "Choose the folder to sync with");
             }
             1 => {
                 table.insert("remote_fs", toml_edit::value(text(&folder)));
@@ -208,11 +293,23 @@ pub fn add_sync(view: &Rc<ScopeView>) {
                 return refuse(&banner, "Choose the local folder");
             }
             table.insert("local", toml_edit::value(text(&local)));
-            if everything.is_active() {
+            let (_, scope, everything) = WHAT[(what.selected() as usize).min(WHAT.len() - 1)];
+            if let Some(scope) = scope {
+                table.insert("scope", toml_edit::value(scope));
+            }
+            if everything {
                 let mut all = toml_edit::Array::new();
                 all.push("**");
                 table.insert("include", toml_edit::value(all));
             }
+        }
+        let trigger = trigger_values
+            .borrow()
+            .get(when.selected() as usize)
+            .copied()
+            .flatten();
+        if let Some(trigger) = trigger {
+            table.insert("trigger", toml_edit::value(trigger));
         }
         add(
             &view,
@@ -221,12 +318,19 @@ pub fn add_sync(view: &Rc<ScopeView>) {
             Entry::Sync,
             table,
             "Added the sync",
+            || {},
         );
     });
     dialog.present(Some(&window));
 }
 
 pub fn add_remote(view: &Rc<ScopeView>) {
+    add_remote_then(view, |_, _| {});
+}
+
+/// Add Remote, calling `added` with the new remote's id and name once it is in.
+fn add_remote_then(view: &Rc<ScopeView>, added: impl Fn(String, String) + 'static) {
+    let added = Rc::new(added);
     let window = view.ctx().window.clone();
     let id = entry("Id, which syncs refer to it by");
     let label = entry("Label (optional)");
@@ -316,6 +420,11 @@ pub fn add_remote(view: &Rc<ScopeView>) {
         if b == 1 && !text(&branch).is_empty() {
             table.insert("branch", toml_edit::value(text(&branch)));
         }
+        let (added, new_id) = (added.clone(), text(&id));
+        let name = remote_name(
+            &new_id,
+            Some(text(&label)).filter(|l| !l.is_empty()).as_deref(),
+        );
         add(
             &view,
             &dialog,
@@ -323,6 +432,7 @@ pub fn add_remote(view: &Rc<ScopeView>) {
             Entry::Remote,
             table,
             "Added the remote",
+            move || added(new_id, name),
         );
     });
     dialog.present(Some(&window));

@@ -341,7 +341,9 @@ It edits your own config: every setting of a sync, a remote and `[daemon]`
 lines it touches, so your comments and layout stay; it is checked the way the
 daemon checks the file, so a change the daemon would refuse is not saved; and the
 running daemons reload it at once. Leaving a setting empty, or choosing
-"Inherit", removes it from the file.
+"Inherit", removes it from the file. Add Sync asks what a new sync syncs
+(everything both ways, paths picked later, or everything one way: upload or
+download only) and when it runs, and can add the remote it needs on the way.
 
 It manages your daemons, one per profile: start and stop them, have them start at
 login, add one for a new profile with the syncs it runs, remove one, keep them

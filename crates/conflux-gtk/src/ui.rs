@@ -52,6 +52,52 @@ pub fn loading(title: &str) -> adw::StatusPage {
     page
 }
 
+/// Let the choices of `row` wrap in its list, where long ones would be cut
+/// off, maybe alike.
+pub fn wrap_choices(row: &adw::ComboRow) {
+    let factory = gtk::SignalListItemFactory::new();
+    factory.connect_setup(|_, item| {
+        let label = gtk::Label::builder()
+            .xalign(0.0)
+            .wrap(true)
+            .max_width_chars(36)
+            .hexpand(true)
+            .build();
+        // The current choice is checked, as in the default list.
+        let check = gtk::Image::from_icon_name("object-select-symbolic");
+        let child = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        child.append(&label);
+        child.append(&check);
+        if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
+            item.set_child(Some(&child));
+        }
+    });
+    let weak = row.downgrade();
+    factory.connect_bind(move |_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let Some(child) = item.child() else {
+            return;
+        };
+        if let (Some(label), Some(text)) = (
+            child.first_child().and_downcast::<gtk::Label>(),
+            item.item().and_downcast::<gtk::StringObject>(),
+        ) {
+            label.set_label(&text.string());
+        }
+        if let Some(check) = child.last_child() {
+            let current = weak.upgrade().map(|row| row.selected());
+            check.set_opacity(if current == Some(item.position()) {
+                1.0
+            } else {
+                0.0
+            });
+        }
+    });
+    row.set_list_factory(Some(&factory));
+}
+
 /// Put `text` in an entry row without revealing its apply button, as setting
 /// it otherwise counts as an edit waiting to be applied.
 pub fn reset_entry(row: &adw::EntryRow, text: &str) {

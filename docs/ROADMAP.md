@@ -268,9 +268,10 @@ What a walk through the app with a realistic config showed was missing:
   its menu), and its status follows the daemon live, the last sync as "3 min ago".
 - [x] **Small fixes:** a remote's page opened with its Id selected for editing; long choices
   (Scope) were cut off, now shown under their title; a folder remote's path reads with `~`.
-- [ ] **Add Sync asks what and when:** both ways, only picked paths, upload only (`scope =
+- [x] **Add Sync asks what and when:** both ways, only picked paths, upload only (`scope =
   "local"`) or download only (`scope = "remote"`), and the trigger; remotes by their label;
-  and a new remote can be added from it.
+  and a new remote can be added from it. Long choices (Scope) wrap in their list, where two
+  of them were cut off alike.
 - [ ] **Keyboard Shortcuts** window (`GtkShortcutsWindow`: libadwaita's own dialog needs 1.8,
   the app supports 1.7).
 - [ ] **Test Connection** on a remote's page and in Add Remote: `backend::check` in core

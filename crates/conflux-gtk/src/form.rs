@@ -205,11 +205,15 @@ impl Form {
         let long = labels.iter().any(|l| l.chars().count() > LONG_CHOICE);
         let row = adw::ComboRow::builder()
             .title(title)
-            .model(&gtk::StringList::new(&labels))
             .use_markup(false)
             .use_subtitle(long)
             .sensitive(self.editable)
             .build();
+        // Set after `use-subtitle`, which only follows later changes.
+        row.set_model(Some(&gtk::StringList::new(&labels)));
+        if long {
+            ui::wrap_choices(&row);
+        }
         let values: Vec<Option<String>> = options.into_iter().map(|(v, _)| v).collect();
         let find = |v: Option<&str>| values.iter().position(|o| o.as_deref() == v);
         let shown = match current.as_deref() {
