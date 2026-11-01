@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-11-01
+
 ### Added
 
 - Conflux (`conflux-gtk`), a GTK (libadwaita) app: the syncs, remotes and daemons of the user
@@ -143,6 +145,7 @@ sync daemon and the CLI that controls it.
 - **Packaging** — Arch Linux `PKGBUILD` and a source install script
   (`install.sh`) for user and system installs.
 
-[Unreleased]: https://github.com/AperteDev/conflux/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/AperteDev/conflux/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/AperteDev/conflux/compare/v1.1.0...v2.0.0
 [1.1.0]: https://github.com/AperteDev/conflux/releases/tag/v1.1.0
 [1.0.0]: https://github.com/AperteDev/conflux/releases/tag/v1.0.0

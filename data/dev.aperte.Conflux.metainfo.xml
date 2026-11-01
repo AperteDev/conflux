@@ -43,5 +43,35 @@
   </supports>
   <!-- scripts/release.py adds each release, with its changelog section. -->
   <releases>
+    <release version="2.0.0" date="2026-11-01">
+      <url type="details">https://github.com/AperteDev/conflux/releases/tag/v2.0.0</url>
+      <description translate="no">
+        <p>Added</p>
+        <ul>
+          <li>Conflux (<code>conflux-gtk</code>), a GTK (libadwaita) app: the syncs, remotes and daemons of the user and the system, live sync status (why a sync failed in a few words), where each setting comes from, the config's warnings in plain words (with a fix where there is one), Sync Now and dry runs. It edits the user's config: every setting of a sync, a remote and <code>[daemon]</code>, adding and deleting syncs and remotes, testing a remote's connection, keeping a remote's password in the keyring, and starting a config from the example. Edits change only the lines they touch, keep comments, are checked the way the daemon checks them, and are reloaded by the running daemons. It manages the user's daemons too: one per profile, started, stopped and set to start at login through systemd, added and removed with the profiles of their syncs, kept running after logout (lingering), with their log from the journal. The system's config and daemons are locked until unlocked with an administrator's password, as in GNOME Settings; then the same pages edit them through <code>conflux-helper</code>, a small program run as root with <code>pkexec</code> that only writes the system config, acts on the system daemons' units, passes them requests and deletes their state. It quits, locking the app again, on Lock or when the window closes.</li>
+          <li>Daemons answer an <code>Info</code> request (version, profile, config file, process id), and report each group's <code>id</code> and whether it is syncing right now in their status.</li>
+          <li>Desktop notifications from user daemons: when a sync fails (once, after its retries, withdrawn when it works again) and when one leaves conflict copies. Clicking one opens the app at that sync. <code>[daemon] notify = false</code> turns them off.</li>
+          <li>Packages for both: <code>.deb</code> packages for Ubuntu 26.04 and newer (<code>conflux</code> for amd64 and arm64, <code>conflux-gtk</code> for amd64), a tarball of the app next to the CLI's, a Flatpak bundle of the app (your own config and daemons only), and an RPM spec for Fedora with <code>conflux-gtk</code> as a subpackage, built on COPR. A <code>Makefile</code> installs either package's files.</li>
+          <li>The system daemon's <code>conflux</code> user comes with the packages, from <code>/usr/lib/sysusers.d/conflux.conf</code>.</li>
+          <li>Man pages: <code>conflux(1)</code> for the daemon and its commands, <code>conflux(5)</code> for the config file. The packages and <code>install.sh</code> install them.</li>
+        </ul>
+        <p>Changed</p>
+        <ul>
+          <li>A user daemon's control socket moved into a directory of its own, <code>$XDG_RUNTIME_DIR/conflux/</code>, which the Flatpak app can be given. The CLI and the app still reach a daemon started before the update on the old path.</li>
+          <li>A system daemon's control socket is open to every local user, who can read its status. Syncing, dry runs and reloading still need root, the <code>conflux</code> service user, or membership in the <code>conflux</code> group.</li>
+          <li>Profile names are limited to ASCII letters, digits, <code>_</code>, <code>-</code> and <code>.</code> (1-64 characters, not starting with <code>.</code> or <code>-</code>), as they become unit, socket and directory names.</li>
+          <li>Release assets come with one <code>SHA256SUMS</code> file instead of a <code>.sha256</code> file per tarball.</li>
+          <li>When the daemon is not running, <code>conflux status</code>, <code>sync</code> and <code>reload</code> say so plainly and show how to start it (the systemd unit of its scope and profile, or <code>conflux daemon</code>), instead of an OS error.</li>
+        </ul>
+        <p>Removed</p>
+        <ul>
+          <li>The Arch <code>PKGBUILD</code> in this repository: the <code>conflux</code>, <code>conflux-bin</code> and <code>conflux-git</code> packages are kept on the AUR.</li>
+        </ul>
+        <p>Fixed</p>
+        <ul>
+          <li>A WebDAV request that fails says why (connection refused, unknown host, untrusted certificate), not only that sending it failed.</li>
+        </ul>
+      </description>
+    </release>
   </releases>
 </component>

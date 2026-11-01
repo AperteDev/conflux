@@ -4,7 +4,7 @@
 %bcond check 1
 
 Name:           conflux
-Version:        1.1.0
+Version:        2.0.0
 Release:        1%{?dist}
 Summary:        Background file-sync daemon for WebDAV, git and local folders
 
@@ -120,5 +120,8 @@ appstreamcli validate --no-net %{buildroot}%{_metainfodir}/dev.aperte.Conflux.me
 %{_datadir}/polkit-1/actions/dev.aperte.conflux.policy
 
 %changelog
+* Sun Nov 01 2026 SelfRef <git@selfref.dev> - 2.0.0-1
+- See CHANGELOG.md
+
 * Mon Oct 26 2026 SelfRef <git@selfref.dev> - 1.1.0-1
 - See CHANGELOG.md
